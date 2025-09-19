@@ -33,7 +33,7 @@ jobs:
           MERGE_LABELS: "automerge,!wip,!work in progress"
           # Optional: only merge PRs created by your sync user/bot
           # (set this to the username that owns the PAT or the app account)
-          # MERGE_FILTER_AUTHOR: "your-bot-or-user-name"
+          MERGE_FILTER_AUTHOR: "Greg-T8"
           # Prefer squash merges for config sync PRs
           MERGE_METHOD: "squash"
           MERGE_COMMIT_MESSAGE: "pull-request-title"
