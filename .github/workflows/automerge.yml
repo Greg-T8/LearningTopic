@@ -22,16 +22,11 @@ jobs:
         uses: pascalgn/automerge-action@v0.16.4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Require the "automerge" label and block WIP labels
           MERGE_LABELS: "automerge"
-          # Optional: only merge PRs created by your sync user/bot
-          # (set this to the username that owns the PAT or the app account)
           MERGE_FILTER_AUTHOR: "Greg-T8"
-          # Prefer squash merges for config sync PRs
           MERGE_METHOD: "squash"
           MERGE_COMMIT_MESSAGE: "pull-request-title"
           # Keep PRs updated if branch protection requires up-to-date base
           UPDATE_LABELS: "automerge"
           UPDATE_METHOD: "rebase"
-          # Auto-delete branches after merge
           MERGE_DELETE_BRANCH: "true"
