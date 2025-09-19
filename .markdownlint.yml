@@ -1,0 +1,4 @@
+# MD033: no-inline-html
+# This rule flags raw HTML inside Markdown. I disable it because I use HTML tags in markdown files.
+MD033: false
+MD013: false
