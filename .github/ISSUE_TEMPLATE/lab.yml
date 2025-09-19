@@ -1,0 +1,48 @@
+name: "Lab"
+description: "Reusable learning lab exercise"
+title: "Lab: <topic>"
+labels: [Lab]
+
+body:
+  - type: input
+    id: goal
+    attributes:
+      label: Goal
+      description: What skill or concept does this lab demonstrate?
+      placeholder: "Deploy and validate Kubernetes RBAC roles"
+
+  - type: input
+    id: file
+    attributes:
+      label: Lab File
+      description: Relative path to the markdown recipe under /labs/
+      placeholder: "labs/kubernetes/rbac-basics.md"
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Outcome
+      description: What should verify success?
+      placeholder: |
+        - User with role binding can list pods
+        - User cannot delete pods
+
+  - type: textarea
+    id: variations
+    attributes:
+      label: Variations / Stretch Goals
+      description: Optional twists to extend the lab
+      placeholder: |
+        - Implement with Terraform
+        - Test across namespaces
+
+  - type: checkboxes
+    id: outcome
+    attributes:
+      label: Current Outcome Level
+      description: Mark the current progress for this lab
+      options:
+        - label: L1 · Framed
+        - label: L2 · Built & Planned
+        - label: L3 · Verified Core
+        - label: L4 · Complete
