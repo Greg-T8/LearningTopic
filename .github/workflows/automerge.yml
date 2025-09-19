@@ -26,7 +26,4 @@ jobs:
           MERGE_FILTER_AUTHOR: "Greg-T8"
           MERGE_METHOD: "squash"
           MERGE_COMMIT_MESSAGE: "pull-request-title"
-          # Keep PRs updated if branch protection requires up-to-date base
-          UPDATE_LABELS: "automerge"
-          UPDATE_METHOD: "rebase"
           MERGE_DELETE_BRANCH: "true"
