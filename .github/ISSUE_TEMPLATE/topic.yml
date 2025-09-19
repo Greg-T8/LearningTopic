@@ -1,0 +1,46 @@
+name: "Topic"
+description: "Planning issue for a certification area or technology track"
+title: "Topic: <Track — Subdomain>"
+labels: [Planning, Topic]
+
+body:
+  - type: input
+    id: track
+    attributes:
+      label: Track / Certification
+      description: Which area or certification does this belong to?
+      placeholder: "Kubernetes / AZ-104 / AI-102"
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What sub-areas will you cover under this topic?
+      placeholder: |
+        - RBAC
+        - Storage Classes
+        - Ingress Controller
+
+  - type: textarea
+    id: labs
+    attributes:
+      label: Candidate Labs
+      description: Which Lab Issues or Markdown files will support this topic?
+      placeholder: |
+        - #42 RBAC Basics
+        - labs/kubernetes/rbac-basics.md
+
+  - type: textarea
+    id: outcomes
+    attributes:
+      label: Target Outcomes
+      description: What outcome levels (L1–L4) are you aiming for and by when?
+      placeholder: |
+        - RBAC to L3 by Oct 10
+        - Storage Classes to L2 by Oct 15
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Any additional planning notes, dependencies, or blockers?
