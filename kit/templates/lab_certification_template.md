@@ -2,8 +2,8 @@
 
 **Date:** YYYY-MM-DD  
 **Level:** L1 | L2 | L3 | L4  
-**Exam Objective/Domain:** <Paste from exam outline>  
-**Linked Issue/PR:** #<id>
+**Exam Objective/Domain:** Paste from exam outline  
+**Linked Issue/PR:** #id
 
 ## Objective
 
@@ -11,9 +11,9 @@ One to two sentences about what this lab achieves. Map directly to exam outline.
 
 ## Prerequisites
 
-- <Resource/Tool>
-- <Subscription/Account>
-- <Links to modules or docs>
+- Resource/Tool
+- Subscription/Account
+- Links to modules or docs
 
 ## Steps
 
