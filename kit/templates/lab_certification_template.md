@@ -18,9 +18,12 @@ One to two sentences about what this lab achieves. Map directly to exam outline.
 ## Steps
 
 1. Step description
+
    ```powershell
    # Example command
    Connect-AzAccount
+   ```
+
 2. Next step...
 3. Continue until lab procedure is documented.
 
