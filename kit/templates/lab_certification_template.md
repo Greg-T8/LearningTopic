@@ -6,14 +6,17 @@
 **Linked Issue/PR:** #<id>
 
 ## Objective
+
 One to two sentences about what this lab achieves. Map directly to exam outline.
 
 ## Prerequisites
+
 - <Resource/Tool>
 - <Subscription/Account>
 - <Links to modules or docs>
 
 ## Steps
+
 1. Step description
    ```powershell
    # Example command
