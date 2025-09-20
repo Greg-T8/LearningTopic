@@ -25,7 +25,6 @@ Example: Learn AVS core components and migration options.
 1. Deploy/Configure step … (doc link)  
 2. Integrate/Connect step … (doc link)  
 
-
 ## Key Learnings
 
 - What “clicked” during this reading or lab  
@@ -46,5 +45,5 @@ Example: Learn AVS core components and migration options.
 
 ## References
 
-- Official Docs: https://learn.microsoft.com/...  
+- Official Docs: [Microsoft Learn](https://learn.microsoft.com)
 - Additional Article/Blog: URL  
