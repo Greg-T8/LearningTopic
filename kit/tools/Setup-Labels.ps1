@@ -1,51 +1,102 @@
-<#
-.SYNOPSIS
-    Standardize GitHub issue labels across learning repos.
+# -------------------------------
+# Detect current repo
+# -------------------------------
+try {
+    $Repo = gh repo view --json nameWithOwner --jq ".nameWithOwner"
+    if (-not $Repo) { throw "Not inside a GitHub repo directory or gh not authenticated." }
+    Write-Host "Running Setup-Labels in repo: $Repo"
+} catch {
+    Write-Error $_
+    exit 1
+}
 
-.DESCRIPTION
-    This script deletes default labels and recreates a consistent label set
-    for the LearningSessions workflow.
-
-    Requirements:
-    - GitHub CLI (gh) installed and authenticated
-    - Run from the repo root or specify --repo explicitly
-
-.EXAMPLE
-    ./Setup-Labels.ps1
-#>
-
-# Define label schema
-$labels = @(
-    @{ name = "session";      color = "1f77b4"; description = "Daily or weekly study session" }
-    @{ name = "lab";          color = "ff7f0e"; description = "Hands-on lab, the HOW of learning" }
-    @{ name = "blocked";      color = "d62728"; description = "Work blocked by dependency" }
-    @{ name = "reading";      color = "9467bd"; description = "Background reading or research" }
-    @{ name = "review";       color = "2ca02c"; description = "Ready for review / PR review" }
-    @{ name = "done";         color = "17becf"; description = "Completed and merged" }
-    @{ name = "meta";         color = "8c564b"; description = "Meta: templates, process, repo hygiene" }
+# -------------------------------
+# Config Section
+# -------------------------------
+# Labels you want to remove (GitHub defaults)
+$DefaultLabelsToRemove = @(
+    "bug",
+    "documentation",
+    "duplicate",
+    "enhancement",
+    "good first issue",
+    "help wanted",
+    "invalid",
+    "question",
+    "wontfix"
 )
 
-Write-Host "Cleaning up default labels..."
-$defaultLabels = @("bug", "duplicate", "enhancement", "good first issue", "help wanted", "invalid", "question", "wontfix")
-foreach ($dl in $defaultLabels) {
-    gh label delete $dl --yes 2>$null
+# Labels you want to keep in this repo (will be created or updated)
+$LabelsToEnsure = @(
+    @{ Name = "type: session";       Color = "1f77b4"; Description = "Individual study session" },
+    @{ Name = "type: lab";           Color = "ff7f0e"; Description = "Hands-on lab work" },
+    @{ Name = "status: planned";     Color = "2ca02c"; Description = "Planned but not started" },
+    @{ Name = "status: in-progress"; Color = "d62728"; Description = "Currently being worked on" },
+    @{ Name = "status: complete";    Color = "9467bd"; Description = "Work finished" }
+)
+
+# -------------------------------
+# Fetch existing labels once
+# -------------------------------
+$existing = @()
+try {
+    $existing = gh label list --repo $Repo --json name,color,description | ConvertFrom-Json
+} catch {
+    Write-Error "Failed to list labels for $Repo. $_"
+    exit 1
+}
+$existingNames = $existing.name
+
+# -------------------------------
+# Remove default GitHub labels
+# -------------------------------
+foreach ($labelName in $DefaultLabelsToRemove) {
+    if ($existingNames -contains $labelName) {
+        Write-Host "Removing default label: '$labelName'"
+        try {
+            gh label delete "$labelName" --repo $Repo --yes | Out-Null
+        } catch {
+            Write-Warning "Could not remove label '$labelName': $_"
+        }
+    } else {
+        Write-Host "Default label not present (skip): '$labelName'"
+    }
 }
 
-Write-Host "Creating standard labels..."
-foreach ($label in $labels) {
-    $exists = gh label list --json name | ConvertFrom-Json | Where-Object { $_.name -eq $label.name }
-    if ($null -eq $exists) {
-        gh label create $label.name `
-            --color $label.color `
-            --description $label.description
-        Write-Host "  Created $($label.name)"
-    }
-    else {
-        gh label edit $label.name `
-            --color $label.color `
-            --description $label.description
-        Write-Host "  Updated $($label.name)"
+# Refresh existing label list after removals
+try {
+    $existing = gh label list --repo $Repo --json name,color,description | ConvertFrom-Json
+} catch {
+    Write-Error "Failed to refresh labels for $Repo. $_"
+    exit 1
+}
+$existingNames = $existing.name
+
+# -------------------------------
+# Ensure configured labels exist (create or update)
+# -------------------------------
+foreach ($label in $LabelsToEnsure) {
+    $name  = $label.Name
+    $color = $label.Color
+    $desc  = $label.Description
+
+    if ($existingNames -contains $name) {
+        # Update color/description to match config
+        Write-Host "Updating label: '$name'"
+        try {
+            gh label edit "$name" --repo $Repo --color $color --description "$desc" | Out-Null
+        } catch {
+            Write-Warning "Could not update label '$name': $_"
+        }
+    } else {
+        # Create new label
+        Write-Host "Creating label: '$name'"
+        try {
+            gh label create "$name" --repo $Repo --color $color --description "$desc" | Out-Null
+        } catch {
+            Write-Warning "Could not create label '$name': $_"
+        }
     }
 }
 
-Write-Host "✅ Labels setup complete."
+Write-Host "Label setup complete for $Repo."

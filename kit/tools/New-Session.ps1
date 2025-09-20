@@ -1,221 +1,248 @@
-<#
-.SYNOPSIS
-  Start a 1-hour learning session:
-  - Creates a session branch (session/YYYY-MM-DD-topic-slug-L#)
-  - Renders PR template (full/slim) with date/tech/topic/slug
-  - Creates evidence folder under /sessions/YYYY-MM-DD-topic-slug/
-  - Pushes branch and opens a PR (labeled "Session"; title encodes L1–L4)
-  - Optionally starts a local 1-hour reminder timer
+#Requires -Version 7.2
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
 
-.EXAMPLE
-  ./scripts/New-Session.ps1 -Tech "Kubernetes" -Topic "RBAC Basics" -Level L1 -Template slim
-
-.PARAMETER Tech
-  Technology focus (e.g., "Kubernetes", "Azure Networking", "C# LINQ").
-  If omitted, attempts to infer from the repository name.
-
-.PARAMETER Topic
-  The specific topic/goal for this 1-hour block (used in title and slug).
-
-.PARAMETER Level
-  Outcome level to start at: L1, L2, L3, L4. (You can bump it before merging.)
-
-.PARAMETER Template
-  "slim" or "full" PR body variant.
-
-.PARAMETER Minutes
-  Duration for the local timer (default 60). Ignored if -SkipTimer is set.
-
-.PARAMETER SkipTimer
-  Don’t start the local reminder timer.
-
-.PARAMETER DryRun
-  Show what would happen without touching git/GitHub.
-#>
-
-[CmdletBinding()]
 param(
-    [string]$Tech,
-    [Parameter(Mandatory)][string]$Topic,
-    [ValidateSet('L1', 'L2', 'L3', 'L4')][string]$Level = 'L1',
-    [ValidateSet('slim', 'full')][string]$Template = 'slim',
-    [int]$Minutes = 60,
-    [switch]$SkipTimer,
-    [switch]$DryRun
+    [Parameter(Mandatory = $true)]
+    [string]$Title,                          # Session title
+
+    [string]$Repo = '.',                     # Local repo root
+    [int]$DurationMinutes = 60,
+    [string]$SessionTemplate = 'templates/labs/session_template.md',
+    [string]$TimeZoneId = 'America/Chicago', # Deterministic timestamps
+
+    # Optional GitHub automation (OFF by default)
+    [switch]$CreateIssue,                    # Create/reuse a session issue
+    [switch]$EnsurePR,                       # Ensure a PR exists and link the issue
+    [string[]]$Labels = @('session','learning','daily'),
+
+    # UX
+    [switch]$Open,                           # Open created items
+    [switch]$NoCommit                        # Skip git commit
 )
 
-# ---------------------------
-# Helpers
-# ---------------------------
-function Stop-WithMessage($msg) { throw "[New-Session] $msg" }
+$Main = {
+    . $Config
+    . $Helpers
+    Initialize-Context
+    $issue = $null
+    if ($CreateIssue) { $issue = Ensure-SessionIssue -Title $IssueTitle -Labels $Labels -Repo $Repo }
 
-function Require-Tool($name) {
-    if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
-        Stop-WithMessage "Required tool '$name' not found in PATH."
+    $pr = $null
+    if ($EnsurePR)  { $pr = Ensure-PullRequest -Repo $Repo -Branch $CurrentBranch -SessionIssue $issue }
+
+    New-SessionMarkdown -Path $SessionPath -Template $SessionTemplate -Context @{
+        Title           = $Title
+        Date            = $DateStamp
+        Time            = $Clock
+        DurationMinutes = $DurationMinutes
+        Branch          = $CurrentBranch
+        IssueNumber     = if ($issue) { $issue.number } else { '' }
+        IssueUrl        = if ($issue) { $issue.url } else { '' }
+        PrNumber        = if ($pr)    { $pr.number }    else { '' }
+        PrUrl           = if ($pr)    { $pr.url }       else { '' }
     }
-}
 
-function Get-RepoRoot {
-    try {
-        $root = git rev-parse --show-toplevel 2>$null
-        if (-not $root) { Stop-WithMessage 'Not in a Git repository.' }
-        return $root.Trim()
+    if (-not $NoCommit) {
+        git add -- $SessionPath
+        git commit -m "session: $Title ($DateStamp $Clock) [skip ci]" | Out-Null
     }
-    catch { Stop-WithMessage 'Unable to locate repository root.' }
+
+    if ($Open) {
+        Start-Item (Resolve-RelativePath -From (Get-Location) -To $SessionPath)
+        if ($issue) { Start-Item $issue.url }
+        if ($pr)    { Start-Item $pr.url }
+    }
+
+    Write-Host "✔ Session created:"
+    Write-Host "  • Session : $(Resolve-RelativePath -From (Get-Location) -To $SessionPath)"
+    if ($issue) { Write-Host "  • Issue   : #$($issue.number) $($issue.url)" }
+    if ($pr)    { Write-Host "  • PR      : #$($pr.number) $($pr.url)" }
 }
 
-function Slugify([string]$s) {
-    ($s -replace '[^A-Za-z0-9 ]', '' -replace '\s+', '-').ToLower()
+$Config = {
+    function Get-NowLocal {
+        param([string]$TzId)
+        try { [TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, [TimeZoneInfo]::FindSystemTimeZoneById($TzId)) }
+        catch { Get-Date }
+    }
+
+    $script:Now        = Get-NowLocal -TzId $TimeZoneId
+    $script:DateStamp  = $Now.ToString('yyyy-MM-dd')
+    $script:TimeStamp  = $Now.ToString('HHmm')
+    $script:Clock      = $Now.ToString('HH:mm')
+
+    $script:RepoRoot      = Resolve-RepoRoot -Path $Repo
+    $script:CurrentBranch = Get-CurrentBranch -RepoRoot $RepoRoot
+
+    # Single session file: sessions/YYYY/YYYY-MM-DD__HHmm-<slug>.md
+    $script:SessionsDir = Join-Path $RepoRoot ("sessions/{0}" -f $Now.ToString('yyyy'))
+    $script:SessionName = ("{0}__{1}-{2}.md" -f $DateStamp, $TimeStamp, (To-Slug $Title))
+    $script:SessionPath = Join-Path $SessionsDir $SessionName
+
+    # Titles for optional GH bits
+    $script:IssueTitle = "[Session] {0} ({1} {2})" -f $Title, $DateStamp, $Clock
+    $script:PrTitle    = "[Sessions] {0}" -f $CurrentBranch
 }
 
-# ---------------------------
-# Preconditions
-# ---------------------------
-Require-Tool git
-Require-Tool gh
+$Helpers = {
+    function Initialize-Context {
+        Ensure-Tool -Name 'git' -Check 'git --version'
+        Push-Location $RepoRoot
+        try { git rev-parse --is-inside-work-tree *> $null } catch { throw "Not a git repository: $RepoRoot" }
+        if ($CreateIssue -or $EnsurePR) { Ensure-Tool -Name 'gh' -Check 'gh --version' }
+        Write-Host "Repo: $RepoRoot"
+        Write-Host "Branch: $CurrentBranch"
+    }
 
-$RepoRoot = Get-RepoRoot
-Set-Location $RepoRoot
+    function New-SessionMarkdown {
+        param(
+            [Parameter(Mandatory)] [string]$Path,
+            [Parameter(Mandatory)] [string]$Template,
+            [Parameter(Mandatory)] [hashtable]$Context
+        )
+        New-Item -ItemType Directory -Path (Split-Path $Path) -Force | Out-Null
 
-# Infer $Tech from repo if not provided
-if (-not $Tech) {
-    $repoName = Split-Path -Leaf $RepoRoot
-    $Tech = $repoName -replace '-', ' '
-}
+        $content = if (Test-Path $Template) { Get-Content -Path $Template -Raw } else {
+@"
+# Session: $($Context.Title)
 
-$Date = Get-Date -Format 'yyyy-MM-dd'
-$Slug = Slugify $Topic
-$Branch = "session/$Date-$Slug-$Level"
-
-# Outcome text for title
-$OutcomeMap = @{
-    'L1' = 'L1 Framed'
-    'L2' = 'L2 Built & Planned'
-    'L3' = 'L3 Verified Core'
-    'L4' = 'L4 Complete'
-}
-$OutcomeText = $OutcomeMap[$Level]
-
-# ---------------------------
-# Resolve template path
-# ---------------------------
-$TemplateCandidates = @(
-    Join-Path $RepoRoot "templates\pull_requests\pull_request_template_$Template.md"),
-Join-Path $RepoRoot ".github\pull_request_template_$Template.md"
+**Date:** $($Context.Date)
+**Time:** $($Context.Time)
+**Duration:** $($Context.DurationMinutes) minutes
+**Branch:** $($Context.Branch)
+**Linked Issue/PR:** $(
+    if ($Context.IssueNumber -and $Context.PrNumber) { "#$($Context.IssueNumber) / #$($Context.PrNumber)" }
+    elseif ($Context.IssueNumber) { "#$($Context.IssueNumber)" }
+    elseif ($Context.PrNumber) { "#$($Context.PrNumber)" }
+    else { "N/A" }
 )
 
-$TemplatePath = $TemplateCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $TemplatePath) {
-    Stop-WithMessage "PR template not found. Expected at: `n  templates/pull_requests/pull_request_template_$Template.md `n  or .github/pull_request_template_$Template.md"
-}
+## Objective
 
-# Rendered PR body saved at repo root (passed to gh --body-file)
-$RenderedPath = Join-Path $RepoRoot 'pull_request_template.md'
+Short statement of what this session will accomplish.
 
-# ---------------------------
-# Compose rendered PR body
-# ---------------------------
-$Body = (Get-Content $TemplatePath -Raw) `
-    -replace '\{\{date\}\}', [Regex]::Escape($Date) `
-    -replace '\{\{tech\}\}', [Regex]::Escape($Tech) `
-    -replace '\{\{topic\}\}', [Regex]::Escape($Topic) `
-    -replace '\{\{slug\}\}', [Regex]::Escape($Slug) `
-    -replace '\{\{lab\}\}', '' `
-    -replace '\{\{drill\}\}', '' `
-    -replace '\{\{links\}\}', '' `
-    -replace '\{\{fixes\}\}', '' `
-    -replace '\{\{next\}\}', ''
+## Plan
 
-if ($DryRun) {
-    Write-Host "Would write PR body to: $RenderedPath"
-}
-else {
-    $Body | Set-Content -Path $RenderedPath -Encoding UTF8
-}
+- Step 1
+- Step 2
+- Step 3
 
-# ---------------------------
-# Ensure sessions evidence folder
-# ---------------------------
-$SessionDir = Join-Path $RepoRoot ('sessions\{0}-{1}' -f $Date, $Slug)
-if (-not (Test-Path $SessionDir)) {
-    if ($DryRun) { Write-Host "Would create directory: $SessionDir" }
-    else { New-Item -ItemType Directory -Force -Path $SessionDir | Out-Null }
-}
+## Notes
 
-# Seed a minimal README in the session folder (optional, helpful)
-$SessionReadme = Join-Path $SessionDir 'README.md'
-if (-not (Test-Path $SessionReadme)) {
-    $seed = @"
-# Session $Date — $Topic
+- Key findings
+- Commands run
+- Follow-ups
 
-- Evidence goes here (screenshots, CLI outputs, notes).
-- Related lab(s): (link issues/files)
+## Evidence
+
+- Screenshot or output snippet reference
+
 "@
-    if ($DryRun) { Write-Host "Would create: $SessionReadme" }
-    else { $seed | Set-Content -Path $SessionReadme -Encoding UTF8 }
-}
-
-# ---------------------------
-# Create branch, commit scaffold, push
-# ---------------------------
-# Avoid branch collision: if exists, append numeric suffix
-function Get-UniqueBranch([string]$b) {
-    $candidate = $b; $n = 2
-    while (git show-ref --verify --quiet "refs/heads/$candidate") {
-        $candidate = "$b-$n"; $n++
-    }
-    return $candidate
-}
-$Branch = Get-UniqueBranch $Branch
-
-$Title = "Session $Date — $Topic ($OutcomeText)"
-
-if ($DryRun) {
-    Write-Host "Would create branch: $Branch"
-    Write-Host "Would git add: $RenderedPath, $SessionDir"
-    Write-Host "Would commit & push, then create PR titled: $Title"
-}
-else {
-    git checkout -b $Branch | Out-Null
-    git add $RenderedPath $SessionDir
-    git commit -m "Session $Date — $Topic ($Level scaffold)" | Out-Null
-    git push -u origin $Branch | Out-Null
-
-    # Ensure the generic Session label exists (no-op if already present)
-    try {
-        gh label create 'Session' --color F59E0B --description 'Learning session PR' 2>$null | Out-Null
-    }
-    catch { }
-
-    # Create PR (body from rendered template)
-    gh pr create --title $Title --body-file $RenderedPath --label 'Session' --fill | Out-Null
-}
-
-# ---------------------------
-# Fetch PR info and optionally start the local timer
-# ---------------------------
-if (-not $DryRun) {
-    try {
-        $prInfo = gh pr view --json number, repository 2>$null | ConvertFrom-Json
-        $PrNumber = $prInfo.number
-        $RepoFull = $prInfo.repository.nameWithOwner
-        $Owner, $Name = $RepoFull.Split('/')
-
-        if (-not $SkipTimer) {
-            $TimerScript = Join-Path $RepoRoot 'scripts\Start-SessionTimer.ps1'
-            if (Test-Path $TimerScript) {
-                & $TimerScript -RepoOwner $Owner -RepoName $Name -PrNumber $PrNumber -Minutes $Minutes
-            }
-            else {
-                Write-Host 'Timer script not found at scripts/Start-SessionTimer.ps1 (skipping reminders).'
-            }
         }
-        Write-Host "✅ Session started: PR #$PrNumber — $Title"
+
+        $content = $content `
+            -replace '\$TITLE',            [regex]::Escape($Context.Title) `
+            -replace '\$DATE',             [regex]::Escape($Context.Date) `
+            -replace '\$TIME',             [regex]::Escape($Context.Time) `
+            -replace '\$DURATION',         [regex]::Escape([string]$Context.DurationMinutes) `
+            -replace '\$BRANCH',           [regex]::Escape($Context.Branch) `
+            -replace '\$ISSUE_NUMBER',     [regex]::Escape([string]$Context.IssueNumber) `
+            -replace '\$ISSUE_URL',        [regex]::Escape([string]$Context.IssueUrl) `
+            -replace '\$PR_NUMBER',        [regex]::Escape([string]$Context.PrNumber) `
+            -replace '\$PR_URL',           [regex]::Escape([string]$Context.PrUrl)
+
+        Set-Content -Path $Path -Value $content -Encoding UTF8
     }
-    catch {
-        Write-Warning "Started session, but couldn't retrieve PR info or start timer: $($_.Exception.Message)"
+
+    function Ensure-SessionIssue {
+        param(
+            [Parameter(Mandatory)] [string]$Title,
+            [Parameter(Mandatory)] [string[]]$Labels,
+            [Parameter(Mandatory)] [string]$Repo
+        )
+        $existing = gh issue list --repo $Repo --state open --search "`"$Title`"" --json number,title,url | ConvertFrom-Json
+        if ($existing -and $existing.Count -ge 1) { return $existing[0] }
+
+        $labelArgs = @()
+        foreach ($l in $Labels) { $labelArgs += @('--label', $l) }
+
+        $body = @(
+            "Session: $Title"
+            "Date: $DateStamp"
+            "Time: $Clock"
+            "Duration: $DurationMinutes minutes"
+            "Branch: $CurrentBranch"
+            ""
+            "_Auto-created by New-Session.ps1_"
+        ) -join "`n"
+
+        gh issue create --repo $Repo --title $Title --body $body @labelArgs --json number,title,url | ConvertFrom-Json
+    }
+
+    function Ensure-PullRequest {
+        param(
+            [Parameter(Mandatory)] [string]$Repo,
+            [Parameter(Mandatory)] [string]$Branch,
+            [Parameter(Mandatory)] $SessionIssue
+        )
+        $pr = gh pr view --repo $Repo --json number,url,headRefName,baseRefName,state 2>$null | ConvertFrom-Json
+        if (-not $pr) {
+            $body = if ($SessionIssue) { "Tracking sessions for **$Branch**.`n`nLinked session issue: #$($SessionIssue.number)" } else { "Tracking sessions for **$Branch**." }
+            $pr   = gh pr create --repo $Repo --title $PrTitle --body $body --head $Branch --fill --json number,url | ConvertFrom-Json
+        } elseif ($SessionIssue) {
+            gh pr edit --repo $Repo --add-issue $SessionIssue.number | Out-Null
+        }
+        return $pr
+    }
+
+    function Ensure-Tool {
+        param([Parameter(Mandatory)][string]$Name,[Parameter(Mandatory)][string]$Check)
+        try { Invoke-Expression $Check *> $null } catch { throw "Required tool not found: $Name" }
+    }
+
+    function Resolve-RepoRoot {
+        param([string]$Path)
+        if ($Path -eq '.' -or -not $Path) {
+            $root = git rev-parse --show-toplevel 2>$null
+            if ($LASTEXITCODE -eq 0 -and $root) { return $root }
+            return (Resolve-Path '.').Path
+        }
+        return (Resolve-Path $Path).Path
+    }
+
+    function Get-CurrentBranch {
+        param([string]$RepoRoot)
+        Push-Location $RepoRoot
+        try {
+            $b = (git rev-parse --abbrev-ref HEAD).Trim()
+            if (-not $b) { throw "No branch detected" }
+            return $b
+        } finally { Pop-Location }
+    }
+
+    function To-Slug {
+        param([string]$Text)
+        $s = $Text.ToLowerInvariant()
+        $s = $s -replace '[^a-z0-9]+','-'
+        $s = $s.Trim('-')
+        if (-not $s) { $s = 'session' }
+        return $s
+    }
+
+    function Resolve-RelativePath {
+        param([string]$From,[string]$To)
+        $fromUri = [Uri]((Resolve-Path $From).Path + [IO.Path]::DirectorySeparatorChar)
+        $toUri   = [Uri](Resolve-Path $To).Path
+        return $fromUri.MakeRelativeUri($toUri).ToString()
+    }
+
+    function Start-Item {
+        param([string]$Target)
+        if ($IsWindows) { Start-Process $Target | Out-Null }
+        elseif ($IsMacOS) { & open $Target | Out-Null }
+        else { & xdg-open $Target | Out-Null }
     }
 }
-else {
-    Write-Host '✅ Dry run complete.'
-}
+
+& $Main
