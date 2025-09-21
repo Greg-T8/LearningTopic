@@ -1,9 +1,10 @@
 # Session: Title
 
-**Date:** YYYY-MM-DD  
+**Date:** YYYY-MM-DD
 **Duration:** 1h | 2h  
 **Linked Issue/PR:** #id  
 **Topic/Repo:** e.g., LearningAzure, LearningKubernetes  
+**Branch:** branch-name
 
 ## Objective
 
