@@ -1,12 +1,9 @@
-#Requires -Version 7.2
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+#Requires -Version 7.4
 
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$Title,                          # Session title
+    [string]$Title = 'Test Session #1',                          # Session title (prompted if empty)
 
-    [string]$Repo = '.',                     # Local repo root
+    [string]$Repo = '.',                   # Local repo root
     [int]$DurationMinutes = 60,
     [string]$SessionTemplate = 'templates/labs/session_template.md',
     [string]$TimeZoneId = 'America/Chicago', # Deterministic timestamps
@@ -14,22 +11,27 @@ param(
     # Optional GitHub automation (OFF by default)
     [switch]$CreateIssue,                    # Create/reuse a session issue
     [switch]$EnsurePR,                       # Ensure a PR exists and link the issue
-    [string[]]$Labels = @('session','learning','daily'),
+    [string[]]$Labels = @('session', 'learning', 'daily'),
 
     # UX
     [switch]$Open,                           # Open created items
     [switch]$NoCommit                        # Skip git commit
 )
 
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
 $Main = {
-    . $Config
     . $Helpers
+    . $Config
+
+    Read-SessionTitle
     Initialize-Context
     $issue = $null
     if ($CreateIssue) { $issue = Ensure-SessionIssue -Title $IssueTitle -Labels $Labels -Repo $Repo }
 
     $pr = $null
-    if ($EnsurePR)  { $pr = Ensure-PullRequest -Repo $Repo -Branch $CurrentBranch -SessionIssue $issue }
+    if ($EnsurePR) { $pr = Ensure-PullRequest -Repo $Repo -Branch $CurrentBranch -SessionIssue $issue }
 
     New-SessionMarkdown -Path $SessionPath -Template $SessionTemplate -Context @{
         Title           = $Title
@@ -39,8 +41,8 @@ $Main = {
         Branch          = $CurrentBranch
         IssueNumber     = if ($issue) { $issue.number } else { '' }
         IssueUrl        = if ($issue) { $issue.url } else { '' }
-        PrNumber        = if ($pr)    { $pr.number }    else { '' }
-        PrUrl           = if ($pr)    { $pr.url }       else { '' }
+        PrNumber        = if ($pr) { $pr.number }    else { '' }
+        PrUrl           = if ($pr) { $pr.url }       else { '' }
     }
 
     if (-not $NoCommit) {
@@ -51,13 +53,13 @@ $Main = {
     if ($Open) {
         Start-Item (Resolve-RelativePath -From (Get-Location) -To $SessionPath)
         if ($issue) { Start-Item $issue.url }
-        if ($pr)    { Start-Item $pr.url }
+        if ($pr) { Start-Item $pr.url }
     }
 
-    Write-Host "✔ Session created:"
+    Write-Host '✔ Session created:'
     Write-Host "  • Session : $(Resolve-RelativePath -From (Get-Location) -To $SessionPath)"
     if ($issue) { Write-Host "  • Issue   : #$($issue.number) $($issue.url)" }
-    if ($pr)    { Write-Host "  • PR      : #$($pr.number) $($pr.url)" }
+    if ($pr) { Write-Host "  • PR      : #$($pr.number) $($pr.url)" }
 }
 
 $Config = {
@@ -76,21 +78,34 @@ $Config = {
     $script:CurrentBranch = Get-CurrentBranch -RepoRoot $RepoRoot
 
     # Single session file: sessions/YYYY/YYYY-MM-DD__HHmm-<slug>.md
-    $script:SessionsDir = Join-Path $RepoRoot ("sessions/{0}" -f $Now.ToString('yyyy'))
-    $script:SessionName = ("{0}__{1}-{2}.md" -f $DateStamp, $TimeStamp, (To-Slug $Title))
+    $script:SessionsDir = Join-Path $RepoRoot ('sessions/{0}' -f $Now.ToString('yyyy'))
+    $script:SessionName = ('{0}-{1}-{2}.md' -f $DateStamp, $TimeStamp, (ConvertTo-Slug $Title))
     $script:SessionPath = Join-Path $SessionsDir $SessionName
 
     # Titles for optional GH bits
-    $script:IssueTitle = "[Session] {0} ({1} {2})" -f $Title, $DateStamp, $Clock
-    $script:PrTitle    = "[Sessions] {0}" -f $CurrentBranch
+    $script:IssueTitle = '[Session] {0} ({1} {2})' -f $Title, $DateStamp, $Clock
+    $script:PrTitle    = '[Sessions] {0}' -f $CurrentBranch
 }
 
 $Helpers = {
+    function Read-SessionTitle {
+        if ([string]::IsNullOrWhiteSpace($Title)) {
+            $Title = Read-Host -Prompt 'Enter session title'
+            if ([string]::IsNullOrWhiteSpace($Title)) {
+                throw 'A non-empty session title is required.'
+            }
+            # Recompute derived names that depend on $Title
+            $script:SessionName = ('{0}-{1}-{2}.md' -f $DateStamp, $TimeStamp, (ConvertTo-Slug $Title))
+            $script:SessionPath = Join-Path $SessionsDir $SessionName
+            $script:IssueTitle  = '[Session] {0} ({1} {2})' -f $Title, $DateStamp, $Clock
+        }
+    }
+
     function Initialize-Context {
-        Ensure-Tool -Name 'git' -Check 'git --version'
+        Confirm-Tool -Name 'git' -Check 'git --version'
         Push-Location $RepoRoot
         try { git rev-parse --is-inside-work-tree *> $null } catch { throw "Not a git repository: $RepoRoot" }
-        if ($CreateIssue -or $EnsurePR) { Ensure-Tool -Name 'gh' -Check 'gh --version' }
+        if ($CreateIssue -or $EnsurePR) { Confirm-Tool -Name 'gh' -Check 'gh --version' }
         Write-Host "Repo: $RepoRoot"
         Write-Host "Branch: $CurrentBranch"
     }
@@ -104,7 +119,7 @@ $Helpers = {
         New-Item -ItemType Directory -Path (Split-Path $Path) -Force | Out-Null
 
         $content = if (Test-Path $Template) { Get-Content -Path $Template -Raw } else {
-@"
+            @"
 # Session: $($Context.Title)
 
 **Date:** $($Context.Date)
@@ -115,7 +130,7 @@ $Helpers = {
     if ($Context.IssueNumber -and $Context.PrNumber) { "#$($Context.IssueNumber) / #$($Context.PrNumber)" }
     elseif ($Context.IssueNumber) { "#$($Context.IssueNumber)" }
     elseif ($Context.PrNumber) { "#$($Context.PrNumber)" }
-    else { "N/A" }
+    else { 'N/A' }
 )
 
 ## Objective
@@ -142,15 +157,15 @@ Short statement of what this session will accomplish.
         }
 
         $content = $content `
-            -replace '\$TITLE',            [regex]::Escape($Context.Title) `
-            -replace '\$DATE',             [regex]::Escape($Context.Date) `
-            -replace '\$TIME',             [regex]::Escape($Context.Time) `
-            -replace '\$DURATION',         [regex]::Escape([string]$Context.DurationMinutes) `
-            -replace '\$BRANCH',           [regex]::Escape($Context.Branch) `
-            -replace '\$ISSUE_NUMBER',     [regex]::Escape([string]$Context.IssueNumber) `
-            -replace '\$ISSUE_URL',        [regex]::Escape([string]$Context.IssueUrl) `
-            -replace '\$PR_NUMBER',        [regex]::Escape([string]$Context.PrNumber) `
-            -replace '\$PR_URL',           [regex]::Escape([string]$Context.PrUrl)
+            -replace '\$TITLE', [regex]::Escape($Context.Title) `
+            -replace '\$DATE', [regex]::Escape($Context.Date) `
+            -replace '\$TIME', [regex]::Escape($Context.Time) `
+            -replace '\$DURATION', [regex]::Escape([string]$Context.DurationMinutes) `
+            -replace '\$BRANCH', [regex]::Escape($Context.Branch) `
+            -replace '\$ISSUE_NUMBER', [regex]::Escape([string]$Context.IssueNumber) `
+            -replace '\$ISSUE_URL', [regex]::Escape([string]$Context.IssueUrl) `
+            -replace '\$PR_NUMBER', [regex]::Escape([string]$Context.PrNumber) `
+            -replace '\$PR_URL', [regex]::Escape([string]$Context.PrUrl)
 
         Set-Content -Path $Path -Value $content -Encoding UTF8
     }
@@ -161,7 +176,7 @@ Short statement of what this session will accomplish.
             [Parameter(Mandatory)] [string[]]$Labels,
             [Parameter(Mandatory)] [string]$Repo
         )
-        $existing = gh issue list --repo $Repo --state open --search "`"$Title`"" --json number,title,url | ConvertFrom-Json
+        $existing = gh issue list --repo $Repo --state open --search "`"$Title`"" --json number, title, url | ConvertFrom-Json
         if ($existing -and $existing.Count -ge 1) { return $existing[0] }
 
         $labelArgs = @()
@@ -173,11 +188,11 @@ Short statement of what this session will accomplish.
             "Time: $Clock"
             "Duration: $DurationMinutes minutes"
             "Branch: $CurrentBranch"
-            ""
-            "_Auto-created by New-Session.ps1_"
+            ''
+            '_Auto-created by New-Session.ps1_'
         ) -join "`n"
 
-        gh issue create --repo $Repo --title $Title --body $body @labelArgs --json number,title,url | ConvertFrom-Json
+        gh issue create --repo $Repo --title $Title --body $body @labelArgs --json number, title, url | ConvertFrom-Json
     }
 
     function Ensure-PullRequest {
@@ -186,19 +201,28 @@ Short statement of what this session will accomplish.
             [Parameter(Mandatory)] [string]$Branch,
             [Parameter(Mandatory)] $SessionIssue
         )
-        $pr = gh pr view --repo $Repo --json number,url,headRefName,baseRefName,state 2>$null | ConvertFrom-Json
+        $pr = gh pr view --repo $Repo --json number, url, headRefName, baseRefName, state 2>$null | ConvertFrom-Json
         if (-not $pr) {
             $body = if ($SessionIssue) { "Tracking sessions for **$Branch**.`n`nLinked session issue: #$($SessionIssue.number)" } else { "Tracking sessions for **$Branch**." }
-            $pr   = gh pr create --repo $Repo --title $PrTitle --body $body --head $Branch --fill --json number,url | ConvertFrom-Json
-        } elseif ($SessionIssue) {
+            $pr   = gh pr create --repo $Repo --title $PrTitle --body $body --head $Branch --fill --json number, url | ConvertFrom-Json
+        }
+        elseif ($SessionIssue) {
             gh pr edit --repo $Repo --add-issue $SessionIssue.number | Out-Null
         }
         return $pr
     }
 
-    function Ensure-Tool {
-        param([Parameter(Mandatory)][string]$Name,[Parameter(Mandatory)][string]$Check)
-        try { Invoke-Expression $Check *> $null } catch { throw "Required tool not found: $Name" }
+    function Confirm-Tool {
+        param(
+            [Parameter(Mandatory)]
+            [string]$Name,
+            [Parameter(Mandatory)]
+            [string]$Check
+        )
+        try {
+            Invoke-Expression $Check *> $null
+        }
+        catch { throw "Required tool not found: $Name" }
     }
 
     function Resolve-RepoRoot {
@@ -206,8 +230,10 @@ Short statement of what this session will accomplish.
         if ($Path -eq '.' -or -not $Path) {
             $root = git rev-parse --show-toplevel 2>$null
             if ($LASTEXITCODE -eq 0 -and $root) { return $root }
+            # Fallback to current dir
             return (Resolve-Path '.').Path
         }
+        # Given path: ensure it's absolute
         return (Resolve-Path $Path).Path
     }
 
@@ -216,22 +242,23 @@ Short statement of what this session will accomplish.
         Push-Location $RepoRoot
         try {
             $b = (git rev-parse --abbrev-ref HEAD).Trim()
-            if (-not $b) { throw "No branch detected" }
+            if (-not $b) { throw 'No branch detected' }
             return $b
-        } finally { Pop-Location }
+        }
+        finally { Pop-Location }
     }
 
-    function To-Slug {
+    function ConvertTo-Slug {
         param([string]$Text)
         $s = $Text.ToLowerInvariant()
-        $s = $s -replace '[^a-z0-9]+','-'
+        $s = $s -replace '[^a-z0-9]+', '-'
         $s = $s.Trim('-')
         if (-not $s) { $s = 'session' }
         return $s
     }
 
     function Resolve-RelativePath {
-        param([string]$From,[string]$To)
+        param([string]$From, [string]$To)
         $fromUri = [Uri]((Resolve-Path $From).Path + [IO.Path]::DirectorySeparatorChar)
         $toUri   = [Uri](Resolve-Path $To).Path
         return $fromUri.MakeRelativeUri($toUri).ToString()
