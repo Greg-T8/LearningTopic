@@ -3,13 +3,12 @@
 param(
     [string]$Title = 'Test Session #1',                          # Session title (prompted if empty)
 
-    [string]$Repo = '.',                   # Local repo root
     [int]$DurationMinutes = 60,
-    [string]$SessionTemplate = 'templates/labs/session_template.md',
+    [string]$SessionTemplate = '/kit/templates/session_template.md',
     [string]$TimeZoneId = 'America/Chicago', # Deterministic timestamps
 
     # Optional GitHub automation (OFF by default)
-    [switch]$CreateIssue,                    # Create/reuse a session issue
+    [Boolean]$CreateIssue = $true,                    # Create/reuse a session issue
     [switch]$EnsurePR,                       # Ensure a PR exists and link the issue
     [string[]]$Labels = @('session', 'learning', 'daily'),
 
@@ -28,12 +27,12 @@ $Main = {
     Read-SessionTitle
     Initialize-Context
     $issue = $null
-    if ($CreateIssue) { $issue = Ensure-SessionIssue -Title $IssueTitle -Labels $Labels -Repo $Repo }
+    if ($CreateIssue) { $issue = Ensure-SessionIssue -Title $IssueTitle -Labels $Labels -Repo $RepoName }
 
     $pr = $null
     if ($EnsurePR) { $pr = Ensure-PullRequest -Repo $Repo -Branch $CurrentBranch -SessionIssue $issue }
 
-    New-SessionMarkdown -Path $SessionPath -Template $SessionTemplate -Context @{
+    New-SessionMarkdown -Path $SessionPath -Template $SessionTemplatePath -Context @{
         Title           = $Title
         Date            = $DateStamp
         Time            = $Clock
@@ -74,13 +73,15 @@ $Config = {
     $script:TimeStamp  = $Now.ToString('HHmm')
     $script:Clock      = $Now.ToString('HH:mm')
 
-    $script:RepoRoot      = Resolve-RepoRoot -Path $Repo
+    $script:RepoRoot      = Resolve-RepoRoot -Path '.'
+    $script:RepoName      = Resolve-RepoName -RepoRoot $RepoRoot
     $script:CurrentBranch = Get-CurrentBranch -RepoRoot $RepoRoot
 
     # Single session file: sessions/YYYY/YYYY-MM-DD__HHmm-<slug>.md
-    $script:SessionsDir = Join-Path $RepoRoot ('sessions/{0}' -f $Now.ToString('yyyy'))
-    $script:SessionName = ('{0}-{1}-{2}.md' -f $DateStamp, $TimeStamp, (ConvertTo-Slug $Title))
-    $script:SessionPath = Join-Path $SessionsDir $SessionName
+    $script:SessionsDir         = Join-Path $RepoRoot ('sessions/{0}' -f $Now.ToString('yyyy'))
+    $script:SessionName         = ('{0}-{1}-{2}.md' -f $DateStamp, $TimeStamp, (ConvertTo-Slug $Title))
+    $script:SessionPath         = Join-Path $SessionsDir $SessionName
+    $script:SessionTemplatePath = Resolve-RepoPath -RepoRoot $RepoRoot -Path $SessionTemplate
 
     # Titles for optional GH bits
     $script:IssueTitle = '[Session] {0} ({1} {2})' -f $Title, $DateStamp, $Clock
@@ -157,15 +158,14 @@ Short statement of what this session will accomplish.
         }
 
         $content = $content `
-            -replace '\$TITLE', [regex]::Escape($Context.Title) `
-            -replace '\$DATE', [regex]::Escape($Context.Date) `
-            -replace '\$TIME', [regex]::Escape($Context.Time) `
-            -replace '\$DURATION', [regex]::Escape([string]$Context.DurationMinutes) `
-            -replace '\$BRANCH', [regex]::Escape($Context.Branch) `
-            -replace '\$ISSUE_NUMBER', [regex]::Escape([string]$Context.IssueNumber) `
-            -replace '\$ISSUE_URL', [regex]::Escape([string]$Context.IssueUrl) `
-            -replace '\$PR_NUMBER', [regex]::Escape([string]$Context.PrNumber) `
-            -replace '\$PR_URL', [regex]::Escape([string]$Context.PrUrl)
+            -replace '(^# Session:\s).*', "`${1}$($Context.Title)" `
+            -replace '(?m)(^\*\*Date:\*\*\s).*', "`${1}$($Context.Date)" `
+            -replace '(?m)(^\*\*Duration:\*\*\s).*', "`${1}$($Context.DurationMinutes) minutes" `
+            -replace '(?m)(^\*\*Branch:\*\*\s).*', "`${1}$($Context.Branch)" `
+            -replace '\$ISSUE_NUMBER', { [string]$Context.IssueNumber } `
+            -replace '\$ISSUE_URL', { [string]$Context.IssueUrl } `
+            -replace '\$PR_NUMBER', { [string]$Context.PrNumber } `
+            -replace '\$PR_URL', { [string]$Context.PrUrl }
 
         Set-Content -Path $Path -Value $content -Encoding UTF8
     }
@@ -236,6 +236,52 @@ Short statement of what this session will accomplish.
         # Given path: ensure it's absolute
         return (Resolve-Path $Path).Path
     }
+
+    function Resolve-RepoName {
+        # Returns repo name in "owner/repo" format
+        param([string]$RepoRoot)
+        #
+        # Ensure we are working with a full path
+        $fullPath = Resolve-Path -Path $RepoRoot
+
+        # Run git to get the remote URL
+        $remoteUrl = git -C $fullPath remote get-url origin 2>$null
+
+        if (-not $remoteUrl) {
+            throw "Could not resolve remote URL from $fullPath"
+        }
+
+        if ($remoteUrl -match 'github\.com[:/](.+?)(?:\.git)?$') {
+            return $Matches[1]
+        }
+        else {
+            throw "Unexpected remote URL format: $remoteUrl"
+        }
+    }
+
+    function Resolve-RepoPath {
+        param(
+            [Parameter(Mandatory)] [string]$RepoRoot,
+            [Parameter(Mandatory)] [string]$Path
+        )
+
+        if ([string]::IsNullOrWhiteSpace($Path)) { return (Resolve-Path $RepoRoot).Path }
+
+        # Treat leading / or \ (without drive) as repo-root-relative:  "/kit/.." -> "<RepoRoot>\kit\.."
+        if ($Path -match '^[\\/]' -and -not ($Path -match '^[A-Za-z]:')) {
+            $rel = $Path.TrimStart('\', '/')
+            return (Resolve-Path (Join-Path $RepoRoot $rel)).Path
+        }
+
+        # Normal relative path -> relative to repo root
+        if (-not [IO.Path]::IsPathRooted($Path)) {
+            return (Resolve-Path (Join-Path $RepoRoot $Path)).Path
+        }
+
+        # Already absolute (C:\..., \\server\share, /abs)
+        return (Resolve-Path $Path).Path
+    }
+
 
     function Get-CurrentBranch {
         param([string]$RepoRoot)
