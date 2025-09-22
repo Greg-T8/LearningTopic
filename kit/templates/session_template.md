@@ -8,7 +8,8 @@
 
 ## Objective
 
-One to two sentences about what you aim to accomplish in this session. Link to lab(s) or notes if applicable.
+One to two sentences about what you aim to accomplish in this session. Link to
+lab(s) or notes if applicable.
 
 ## Plan
 

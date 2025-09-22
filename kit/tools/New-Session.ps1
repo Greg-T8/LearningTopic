@@ -1,16 +1,16 @@
 #Requires -Version 7.4
 
 param(
-    [string]$Title = 'Test Session #1',                          # Session title (prompted if empty)
+    [string]$Title = 'Test Session #45',      # Session title (prompted if empty)
 
     [int]$DurationMinutes = 60,
     [string]$SessionTemplate = '/kit/templates/session_template.md',
-    [string]$TimeZoneId = 'America/Chicago', # Deterministic timestamps
+    [string]$TimeZoneId = 'America/Chicago',
 
     # Optional GitHub automation (OFF by default)
-    [Boolean]$CreateIssue = $true,                    # Create/reuse a session issue
+    [Boolean]$CreateIssue = $true,
     [switch]$EnsurePR,                       # Ensure a PR exists and link the issue
-    [string[]]$Labels = @('session', 'learning', 'daily'),
+    [string[]]$Labels = @('type: session', 'no-exist'),
 
     # UX
     [switch]$Open,                           # Open created items
@@ -27,7 +27,7 @@ $Main = {
     Read-SessionTitle
     Initialize-Context
     $issue = $null
-    if ($CreateIssue) { $issue = Ensure-SessionIssue -Title $IssueTitle -Labels $Labels -Repo $RepoName }
+    if ($CreateIssue) { $issue = New-SessionIssue -Title $IssueTitle -Labels $Labels -Repo $RepoName }
 
     $pr = $null
     if ($EnsurePR) { $pr = Ensure-PullRequest -Repo $Repo -Branch $CurrentBranch -SessionIssue $issue }
@@ -170,17 +170,49 @@ Short statement of what this session will accomplish.
         Set-Content -Path $Path -Value $content -Encoding UTF8
     }
 
-    function Ensure-SessionIssue {
+
+    function New-SessionIssue {
         param(
             [Parameter(Mandatory)] [string]$Title,
             [Parameter(Mandatory)] [string[]]$Labels,
             [Parameter(Mandatory)] [string]$Repo
         )
-        $existing = gh issue list --repo $Repo --state open --search "`"$Title`"" --json number, title, url | ConvertFrom-Json
+
+        # Reuse existing open issue with same title
+        $existing = gh issue list --repo $Repo --state open --search "in:title $Title" --json "number,title,url" | ConvertFrom-Json
         if ($existing -and $existing.Count -ge 1) { return $existing[0] }
 
+        # Fetch repo label names
+        $repoLabels = gh label list --repo $Repo --json name 2>$null | ConvertFrom-Json
+        $repoLabelNames = @()
+        if ($repoLabels) { $repoLabelNames = $repoLabels | ForEach-Object { $_.name } }
+
+        # Case-insensitive set of existing labels
+        $labelSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($n in $repoLabelNames) { [void]$labelSet.Add(($n ?? '').Trim()) }
+
+        # Normalize requested labels (trim, dedupe, non-empty)
+        $requested = [System.Linq.Enumerable]::ToArray(
+            [System.Linq.Enumerable]::Distinct(
+                [System.Linq.Enumerable]::Where($Labels, [Func[string, bool]] { param($x) -not [string]::IsNullOrWhiteSpace($x) }),
+                [System.StringComparer]::OrdinalIgnoreCase
+            )
+        )
+
+        $valid   = New-Object System.Collections.Generic.List[string]
+        $missing = New-Object System.Collections.Generic.List[string]
+        foreach ($l in $requested) {
+            $t = $l.Trim()
+            if ($labelSet.Contains($t)) { [void]$valid.Add($t) } else { [void]$missing.Add($t) }
+        }
+
+        if ($missing.Count -gt 0) {
+            Write-Warning ('The following labels do not exist in {0} and will be ignored: {1}' -f $Repo, ($missing -join ', '))
+        }
+
+        # Build label args only for labels that actually exist
         $labelArgs = @()
-        foreach ($l in $Labels) { $labelArgs += @('--label', $l) }
+        foreach ($l in $valid) { $labelArgs += @('--label', "`"$l`"") }
 
         $body = @(
             "Session: $Title"
@@ -192,7 +224,7 @@ Short statement of what this session will accomplish.
             '_Auto-created by New-Session.ps1_'
         ) -join "`n"
 
-        gh issue create --repo $Repo --title $Title --body $body @labelArgs --json number, title, url | ConvertFrom-Json
+        gh issue create --repo $Repo --title $Title --body $body @labelArgs | ConvertFrom-Json
     }
 
     function Ensure-PullRequest {
