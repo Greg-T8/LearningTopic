@@ -10,7 +10,7 @@ param(
     # Optional GitHub automation (OFF by default)
     [Boolean]$CreateIssue = $true,
     [switch]$EnsurePR,                       # Ensure a PR exists and link the issue
-    [string[]]$Labels = @('type: session', 'no-exist'),
+    [string[]]$Labels = @('Type: Session', 'no-exist'),
 
     # UX
     [switch]$Open,                           # Open created items
@@ -24,8 +24,8 @@ $Main = {
     . $Helpers
     . $Config
 
-    Read-SessionTitle
-    Initialize-Context
+    Set-SessionTitle
+    Resolve-GitContext
     $issue = $null
     if ($CreateIssue) { $issue = New-SessionIssue -Title $IssueTitle -Labels $Labels -Repo $RepoName }
 
@@ -89,7 +89,7 @@ $Config = {
 }
 
 $Helpers = {
-    function Read-SessionTitle {
+    function Set-SessionTitle {
         if ([string]::IsNullOrWhiteSpace($Title)) {
             $Title = Read-Host -Prompt 'Enter session title'
             if ([string]::IsNullOrWhiteSpace($Title)) {
@@ -102,7 +102,7 @@ $Helpers = {
         }
     }
 
-    function Initialize-Context {
+    function Resolve-GitContext {
         Confirm-Tool -Name 'git' -Check 'git --version'
         Push-Location $RepoRoot
         try { git rev-parse --is-inside-work-tree *> $null } catch { throw "Not a git repository: $RepoRoot" }
@@ -179,7 +179,7 @@ Short statement of what this session will accomplish.
         )
 
         # Reuse existing open issue with same title
-        $existing = gh issue list --repo $Repo --state open --search "in:title $Title" --json "number,title,url" | ConvertFrom-Json
+        $existing = gh issue list --repo $Repo --state open --search "in:title $Title" --json 'number,title,url' | ConvertFrom-Json
         if ($existing -and $existing.Count -ge 1) { return $existing[0] }
 
         # Fetch repo label names
@@ -187,26 +187,27 @@ Short statement of what this session will accomplish.
         $repoLabelNames = @()
         if ($repoLabels) { $repoLabelNames = $repoLabels | ForEach-Object { $_.name } }
 
-        # Case-insensitive set of existing labels
-        $labelSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        foreach ($n in $repoLabelNames) { [void]$labelSet.Add(($n ?? '').Trim()) }
+        # Normalize repo labels (case-insensitive lookup)
+        $repoLabelNames = $repoLabelNames | ForEach-Object { $_.Trim() }
 
-        # Normalize requested labels (trim, dedupe, non-empty)
-        $requested = [System.Linq.Enumerable]::ToArray(
-            [System.Linq.Enumerable]::Distinct(
-                [System.Linq.Enumerable]::Where($Labels, [Func[string, bool]] { param($x) -not [string]::IsNullOrWhiteSpace($x) }),
-                [System.StringComparer]::OrdinalIgnoreCase
-            )
-        )
+        # Normalize requested labels (trim, drop empty, dedupe case-insensitive)
+        $requested = $Labels |
+            ForEach-Object { $_.Trim() } |
+            Sort-Object -Unique
 
-        $valid   = New-Object System.Collections.Generic.List[string]
-        $missing = New-Object System.Collections.Generic.List[string]
+        $valid   = @()
+        $missing = @()
+
         foreach ($l in $requested) {
-            $t = $l.Trim()
-            if ($labelSet.Contains($t)) { [void]$valid.Add($t) } else { [void]$missing.Add($t) }
+            if ($repoLabelNames -contains $l) {
+                $valid += $l
+            }
+            else {
+                $missing += $l
+            }
         }
 
-        if ($missing.Count -gt 0) {
+        if ($missing) {
             Write-Warning ('The following labels do not exist in {0} and will be ignored: {1}' -f $Repo, ($missing -join ', '))
         }
 
