@@ -1,7 +1,7 @@
 #Requires -Version 7.4
 
 param(
-    [string]$Title = 'Test Session #45',      # Session title (prompted if empty)
+    [string]$Title = 'Test Session 45',      # Session title (prompted if empty)
 
     [int]$DurationMinutes = 60,
     [string]$SessionTemplate = '/kit/templates/session_template.md',
@@ -176,11 +176,11 @@ $Helpers = {
         foreach ($l in $valid) { $labelArgs += @('--label', "`"$l`"") }
 
         $body = @(
-            "Session: $Title"
-            "Date: $DateStamp"
-            "Time: $Clock"
-            "Duration: $DurationMinutes minutes"
-            "Branch: $CurrentBranch"
+            "**Session:** [$Title](link-to-session-file)"
+            "**Date:** $DateStamp"
+            "**Time:** $Clock"
+            "**Duration:** $DurationMinutes minutes"
+            "**Branch:** $CurrentBranch"
             ''
             '_Auto-created by New-Session.ps1_'
         ) -join "`n"
