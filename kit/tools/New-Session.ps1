@@ -63,7 +63,7 @@ $Config = {
     $script:Now        = Get-NowLocal -TzId $TimeZoneId
     $script:DateStamp  = $Now.ToString('yyyy-MM-dd')
     $script:TimeStamp  = $Now.ToString('HHmm')
-    $script:Clock      = $Now.ToString('HH:mm')
+    $script:Clock      = $Now.ToString('HH:mm tt')
 
     $script:RepoRoot      = Resolve-RepoRoot -Path '.'
     $script:RepoName      = Resolve-RepoName -RepoRoot $RepoRoot
@@ -110,53 +110,21 @@ $Helpers = {
         )
         New-Item -ItemType Directory -Path (Split-Path $Path) -Force | Out-Null
 
-        $content = if (Test-Path $Template) { Get-Content -Path $Template -Raw } else {
-            @"
-# Session: $($Context.Title)
-
-**Date:** $($Context.Date)
-**Time:** $($Context.Time)
-**Duration:** $($Context.DurationMinutes) minutes
-**Branch:** $($Context.Branch)
-**Linked Issue/PR:** $(
-    if ($Context.IssueNumber -and $Context.PrNumber) { "#$($Context.IssueNumber) / #$($Context.PrNumber)" }
-    elseif ($Context.IssueNumber) { "#$($Context.IssueNumber)" }
-    elseif ($Context.PrNumber) { "#$($Context.PrNumber)" }
-    else { 'N/A' }
-)
-
-## Objective
-
-Short statement of what this session will accomplish.
-
-## Plan
-
-- Step 1
-- Step 2
-- Step 3
-
-## Notes
-
-- Key findings
-- Commands run
-- Follow-ups
-
-## Evidence
-
-- Screenshot or output snippet reference
-
-"@
+        $content = if (Test-Path $Template) {
+            Get-Content -Path $Template -Raw
+        }
+        else {
+            throw "Template not found: $Template"
         }
 
         $content = $content `
             -replace '(^# Session:\s).*', "`${1}$($Context.Title)" `
             -replace '(?m)(^\*\*Date:\*\*\s).*', "`${1}$($Context.Date)" `
+            -replace '(?m)(^\*\*Time:\*\*\s).*', "`${1}$($Context.Time)" `
             -replace '(?m)(^\*\*Duration:\*\*\s).*', "`${1}$($Context.DurationMinutes) minutes" `
             -replace '(?m)(^\*\*Branch:\*\*\s).*', "`${1}$($Context.Branch)" `
-            -replace '\$ISSUE_NUMBER', { [string]$Context.IssueNumber } `
-            -replace '\$ISSUE_URL', { [string]$Context.IssueUrl } `
-            -replace '\$PR_NUMBER', { [string]$Context.PrNumber } `
-            -replace '\$PR_URL', { [string]$Context.PrUrl }
+            -replace '(?m)(^\*\*Linked Issue:\*\*\s).*', "`${1}#$($Context.IssueNumber)" `
+            # -replace '(?m)(^\*\*Linked PR:\*\*\s).*', "`${1}#$($Context.PrNumber)" `
 
         Set-Content -Path $Path -Value $content -Encoding UTF8
     }
@@ -220,7 +188,7 @@ Short statement of what this session will accomplish.
         $issueURL = gh issue create --repo $Repo --title $Title --body $body @labelArgs
 
         # Get session issue and return as PSCustomObject
-        $issue = gh issue view $issueURL --json number,title,url | ConvertFrom-Json
+        $issue = gh issue view $issueURL --json 'number,title,url' | ConvertFrom-Json
 
         if ($null -eq $issue) { throw 'Failed to create or retrieve the new issue.' }
 
