@@ -1,17 +1,14 @@
 # Session: Title
 
 **Date:** YYYY-MM-DD
-**Time:** HH:MM
 **Duration:** 1h | 2h  
-**Linked Issue:** #id
-**Linked PR:** #id (if applicable)
+**Linked Issue/PR:** #id  
 **Topic/Repo:** e.g., LearningAzure, LearningKubernetes  
 **Branch:** branch-name
 
 ## Objective
 
-One to two sentences about what you aim to accomplish in this session. Link to
-lab(s) or notes if applicable.
+One to two sentences about what you aim to accomplish in this session. Link to lab(s) or notes if applicable.
 
 ## Plan
 
