@@ -1,179 +1,197 @@
-<#
-.SYNOPSIS
-  Scaffolds or continues a lab by topic (no dates). Creates/uses labs/<slug>.md and a lab/<slug> branch.
-
-.EXAMPLE
-  ./New-Lab.ps1 -Title "Azure Firewall DNAT" -Push -OpenPR
-
-.EXAMPLE
-  ./New-Lab.ps1 -Title "Kubernetes HAProxy Load Balancer"
-#>
-
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory=$true)]
-    [string]$Title,
+    [string]$LabName,
+    [int]$ExistingIssueNumber,
+    [string]$Repo,
 
-    [string]$Slug,
+    # Project targeting: EITHER supply ProjectUrl OR (ProjectOwner + ProjectNumber)
+    [string]$ProjectUrl,
+    [string]$ProjectOwner,
+    [int]$ProjectNumber,
 
-    # Repo root (where .git lives). Defaults to current directory.
-    [string]$RepoRoot = ".",
-
-    # If set, push the branch when a new file is created (or always if -AlwaysPush)
-    [switch]$Push,
-
-    # Always push branch (even if file already existed)
-    [switch]$AlwaysPush,
-
-    # If set, attempts to open a PR via gh CLI
-    [switch]$OpenPR
+    [string]$LabTemplatePath = 'templates/labs/lab_template.md',
+    [string]$PrTemplateFile  = 'pull_request_template_full.md'
 )
 
-function Ensure-Git() {
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        throw "git is required but not found in PATH."
-    }
+$Main = {
+    . $Helpers
+    . $Config
+
+    if (-not $LabName) { $LabName = Read-Host 'Lab name' }
+
+    $repo   = Get-Repo -Repo $Repo
+    $owner  = $repo.Split('/')[0]
+    $slug   = Slugify $LabName
+    $day    = Today
+    $ctx    = New-LabContext -Repo $repo -Owner $owner -Day $day -Slug $slug
+
+    $issue  = Ensure-LabIssue -Repo $repo -LabName $LabName -LabFile $ctx.LabFile -ExistingIssueNumber $ExistingIssueNumber
+    Add-IssueToProject -Repo $repo -IssueNumber $issue -Owner $owner -ProjectUrl $ProjectUrl -ProjectOwner $ProjectOwner -ProjectNumber $ProjectNumber
+
+    Initialize-LabFiles -TemplatePath $LabTemplatePath -LabDir $ctx.LabDir -LabFile $ctx.LabFile -Day $day -IssueNumber $issue
+    Create-LabBranchAndCommit -Branch $ctx.Branch -LabFile $ctx.LabFile -LabName $LabName -IssueNumber $issue
+    Open-LabPR -Repo $repo -PrTemplateFile $PrTemplateFile -PrTitle "[Lab] $LabName" -IssueNumber $issue -LabFile $ctx.LabFile
+
+    Show-LabSummary -IssueNumber $issue -ProjectUrl $ProjectUrl -Branch $ctx.Branch -LabFile $ctx.LabFile
 }
 
-function Ensure-Gh() {
-    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-        Write-Warning "gh (GitHub CLI) not found. Skipping PR creation."
-        return $false
-    }
-    return $true
+$Config = {
+    Set-Variable -Name DateFormat -Value 'yyyy-MM-dd' -Scope Script -Option ReadOnly
 }
 
-function Resolve-RepoRoot($root) {
-    $full = Resolve-Path -Path $root
-    if (-not (Test-Path (Join-Path $full '.git'))) {
-        throw "No .git folder found at '$full'. Set -RepoRoot to your repo root."
-    }
-    return $full
-}
+$Helpers = {
+    function Fail($msg) { Write-Error $msg; exit 1 }
+    function Run($cmd) { Write-Host ">> $cmd" -ForegroundColor Cyan; Invoke-Expression $cmd }
 
-function New-Slug([string]$text) {
-    $s = $text.Trim().ToLowerInvariant()
-    $s = $s -replace "[^a-z0-9]+","-"
-    $s = $s.Trim("-")
-    if ([string]::IsNullOrWhiteSpace($s)) {
-        throw "Unable to derive a slug from title '$text'."
-    }
-    return $s
-}
-
-function Get-TemplateContent($repoRoot) {
-    $templatePath = Join-Path $repoRoot "templates/labs/lab_template.md"
-    if (Test-Path $templatePath) {
-        return Get-Content -Path $templatePath -Raw
+    function Get-Repo {
+        param([string]$Repo)
+        if ($Repo) { return $Repo }
+        $url = (git remote get-url origin) 2>$null
+        if (-not $url) { Fail 'Cannot infer repo. Provide -Repo owner/repo.' }
+        if ($url -match '[:/]([^/]+/[^/\.]+)(\.git)?$') { return $Matches[1] }
+        Fail "Failed to parse owner/repo from origin URL '$url'"
     }
 
-@"
----
-title: "{{TITLE}}"
-tags: []
-status: "draft"
----
+    function Slugify([string]$s) {
+        $t = $s.Trim().ToLower()
+        $t = $t -replace '[^a-z0-9\- ]', ''
+        $t = $t -replace '\s+', '-'
+        $t = $t -replace '\-+', '-'
+        return $t.Trim('-')
+    }
 
-# {{TITLE}}
+    function Today() { (Get-Date).ToString($script:DateFormat) }
 
-## Objective
-<!-- What are we trying to learn/build? -->
+    function New-LabContext {
+        param(
+            [Parameter(Mandatory)] [string]$Repo,
+            [Parameter(Mandatory)] [string]$Owner,
+            [Parameter(Mandatory)] [string]$Day,
+            [Parameter(Mandatory)] [string]$Slug
+        )
+        $branch  = "lab/$Day-$Slug"
+        $labDir  = "labs/$Day-$Slug"
+        $labFile = "$labDir/$Day-$Slug.md"
+        [pscustomobject]@{
+            Repo    = $Repo
+            Owner   = $Owner
+            Branch  = $branch
+            LabDir  = $labDir
+            LabFile = $labFile
+        }
+    }
 
-## Prerequisites
-<!-- Links, prior labs, environment notes -->
+    function Add-IssueToProject {
+        param(
+            [Parameter(Mandatory)] [string]$Repo,
+            [Parameter(Mandatory)] [int]$IssueNumber,
+            [Parameter(Mandatory)] [string]$Owner,
+            [string]$ProjectUrl,
+            [string]$ProjectOwner,
+            [int]$ProjectNumber
+        )
+        $issueUrl = "https://github.com/$Repo/issues/$IssueNumber"
+        if ($ProjectUrl) {
+            Run "gh project item-add --url `"$ProjectUrl`" --owner `"$Owner`" --url `"$issueUrl`""
+        }
+        elseif ($ProjectOwner -and $ProjectNumber) {
+            Run "gh project item-add --owner `"$ProjectOwner`" --number $ProjectNumber --url `"$issueUrl`""
+        }
+        else {
+            Write-Host 'No project info provided. Skipping project add.'
+        }
+    }
 
-## Steps
-1.
+    function Ensure-LabIssue {
+        param(
+            [Parameter(Mandatory)] [string]$Repo,
+            [Parameter(Mandatory)] [string]$LabName,
+            [Parameter(Mandatory)] [string]$LabFile,
+            [int]$ExistingIssueNumber
+        )
+        if ($ExistingIssueNumber) {
+            Write-Host "Using existing issue #$ExistingIssueNumber"
+            return $ExistingIssueNumber
+        }
 
-## Findings / Notes
+        $body = @'
+**Objective**
+Briefly describe the learning objective.
 
+**Definition of Done**
+- [ ] Lab notes committed in `$labFile`
+- [ ] Learning outcomes captured
+- [ ] PR merged
 
-## Next
--
+**Links**
+- (add resources)
+'@
 
+        $createIssueCmd = "gh issue create -R $Repo --title `"[Lab] $LabName`" --body @'$body'@ --label `"type: lab`" --label `"status: planned`""
+        $issueUrlOut = (Run $createIssueCmd | Select-Object -Last 1)
+        if ($issueUrlOut -notmatch '/issues/(\d+)$') { Fail "Could not parse created issue number from: $issueUrlOut" }
+        return [int]$Matches[1]
+    }
+
+    function Initialize-LabFiles {
+        param(
+            [Parameter(Mandatory)] [string]$TemplatePath,
+            [Parameter(Mandatory)] [string]$LabDir,
+            [Parameter(Mandatory)] [string]$LabFile,
+            [Parameter(Mandatory)] [string]$Day,
+            [Parameter(Mandatory)] [int]$IssueNumber
+        )
+        if (-not (Test-Path $TemplatePath)) { Fail "Template not found: $TemplatePath" }
+        New-Item -ItemType Directory -Force -Path $LabDir | Out-Null
+        (Get-Content $TemplatePath) `
+            -replace '\*\*Date:\*\*.*', "**Date:** $Day" `
+            -replace '\*\*Linked Issue/PR:\*\*.*', "**Linked Issue/PR:** #$IssueNumber" `
+      | Set-Content $LabFile -NoNewline
+        Add-Content $LabFile "`r`n`r`n## Sessions`r`n"
+    }
+
+    function Create-LabBranchAndCommit {
+        param(
+            [Parameter(Mandatory)] [string]$Branch,
+            [Parameter(Mandatory)] [string]$LabFile,
+            [Parameter(Mandatory)] [string]$LabName,
+            [Parameter(Mandatory)] [int]$IssueNumber
+        )
+        Run "git checkout -b `"$Branch`""
+        Run "git add `"$LabFile`""
+        Run "git commit -m `"chore(lab): scaffold $LabName (#$IssueNumber)`""
+        Run "git push -u origin `"$Branch`""
+    }
+
+    function Open-LabPR {
+        param(
+            [Parameter(Mandatory)] [string]$Repo,
+            [Parameter(Mandatory)] [string]$PrTemplateFile,
+            [Parameter(Mandatory)] [string]$PrTitle,
+            [Parameter(Mandatory)] [int]$IssueNumber,
+            [Parameter(Mandatory)] [string]$LabFile
+        )
+        $prBody = @"
+Closes #$IssueNumber
+
+This PR scaffolds the lab and initial notes under \`$LabFile\`.
 "@
-}
-
-try {
-    Ensure-Git
-    $repo = Resolve-RepoRoot $RepoRoot
-
-    if (-not $Slug) { $Slug = New-Slug $Title }
-
-    $labsDir   = Join-Path $repo "labs"
-    $labFile   = Join-Path $labsDir "$Slug.md"
-    $branch    = "lab/$Slug"
-
-    if (-not (Test-Path $labsDir)) { New-Item -ItemType Directory -Path $labsDir | Out-Null }
-
-    Push-Location $repo
-    try {
-        # Sync main and create/switch branch
-        git fetch --all --prune | Out-Null
-        git checkout main | Out-Null
-        git pull --ff-only | Out-Null
-
-        $branchExists = (& git branch --list $branch) -ne $null
-        if ($branchExists) {
-            git switch $branch | Out-Null
-            Write-Host "Switched to existing branch '$branch'."
-        } else {
-            git switch -c $branch | Out-Null
-            Write-Host "Created and switched to branch '$branch'."
-        }
-
-        $created = $false
-        if (-not (Test-Path $labFile)) {
-            $tpl = Get-TemplateContent $repo
-            $content = $tpl.Replace("{{TITLE}}", $Title)
-            Set-Content -Path $labFile -Value $content -NoNewline
-            git add $labFile | Out-Null
-            git commit -m "Lab: initialize '$Title' ($Slug)" | Out-Null
-            $created = $true
-            Write-Host "Created new lab file: $($labFile.Substring($repo.Length+1))"
-        } else {
-            Write-Host "Lab file already exists: $($labFile.Substring($repo.Length+1))"
-        }
-
-        if ($AlwaysPush -or ($Push -and $created)) {
-            # Ensure upstream
-            git push -u origin $branch | Out-Null
-            Write-Host "Pushed branch '$branch' to origin."
-        }
-
-        if ($OpenPR) {
-            if (Ensure-Gh) {
-                # Create a draft PR if one doesn't exist
-                $existingPr = (gh pr list --head $branch --json number --jq '.[0].number' 2>$null)
-                if ($existingPr) {
-                    Write-Host "PR already exists: #$existingPr"
-                } else {
-                    $prTitle = "Lab: $Title"
-                    $body = @"
-This PR tracks work on the **$Title** lab.
-
-- Lab file: \`labs/$Slug.md\`
-- Branch: \`$branch\`
-
-> Note: Sessions (dated) should reference and update this lab as needed.
-"@
-                    gh pr create --title "$prTitle" --body "$body" --base main --head $branch --draft | Out-Null
-                    Write-Host "Opened draft PR: $prTitle"
-                }
-            }
-        }
-
-        Write-Host ""
-        Write-Host "Next steps:"
-        Write-Host "  - Edit: labs/$Slug.md"
-        Write-Host "  - Commit changes on branch: $branch"
-        Write-Host "  - Open/convert PR when ready (draft PR recommended while iterating)."
+        Run "gh pr create -R $Repo --title `"$PrTitle`" --body @'$prBody'@ --draft --fill --template `"$PrTemplateFile`""
     }
-    finally {
-        Pop-Location
+
+    function Show-LabSummary {
+        param(
+            [Parameter(Mandatory)] [int]$IssueNumber,
+            [string]$ProjectUrl,
+            [Parameter(Mandatory)] [string]$Branch,
+            [Parameter(Mandatory)] [string]$LabFile
+        )
+        Write-Host "`n✅ Lab ready:"
+        Write-Host ('  - Issue:       #{0}' -f $IssueNumber)
+        Write-Host ('  - Project:     {0}' -f ($(if ($ProjectUrl) { $ProjectUrl }else { '(skipped)' })))
+        Write-Host ('  - Branch:      {0}  (you are here)' -f $Branch)
+        Write-Host ('  - File:        {0}' -f $LabFile)
     }
 }
-catch {
-    Write-Error $_.Exception.Message
-    exit 1
-}
+
+& $Main
