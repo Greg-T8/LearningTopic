@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$LabName,
+    [string]$LabName = 'This is a test',
     [int]$ExistingIssueNumber,
     [string]$Repo,
 
@@ -8,8 +8,8 @@ param(
     [string]$ProjectOwner,
     [int]$ProjectNumber = 2,
 
-    [string]$LabTemplatePath = 'templates/labs/lab_template.md',
-    [string]$PrTemplateFile  = 'pull_request_template_full.md'
+    [string]$LabTemplatePath = 'kit/templates/lab_template.md',
+    [string]$PrTemplateFile  = 'kit/templates/pull_request_template_full.md'
 )
 
 $Main = {
@@ -22,9 +22,10 @@ $Main = {
     $slug    = Slugify $LabName
     $context = New-LabContext -Repo $repo -Owner $owner -Slug $slug
 
-    $issueNumber  = New-GitHubIssue -Repo $repo -LabName $LabName -LabFile $context.LabFile -ExistingIssueNumber $ExistingIssueNumber
-    Add-GitHubIssueToProject -Repo $repo -IssueNumber $issueNumber -Owner $owner -ProjectNumber $ProjectNumber
+    # $issueNumber  = New-GitHubIssue -Repo $repo -LabName $LabName -LabFile $context.LabFile -ExistingIssueNumber $ExistingIssueNumber
+    # Add-GitHubIssueToProject -Repo $repo -IssueNumber $issueNumber -Owner $owner -ProjectNumber $ProjectNumber
 
+    $day = Get-Date -Format 'yyyy-MM-dd'
     Initialize-LabFiles -TemplatePath $LabTemplatePath -LabDir $context.LabDir -LabFile $context.LabFile -Day $day -IssueNumber $issueNumber
     Create-LabBranchAndCommit -Branch $context.Branch -LabFile $context.LabFile -LabName $LabName -IssueNumber $issueNumber
     Open-LabPR -Repo $repo -PrTemplateFile $PrTemplateFile -PrTitle "[Lab] $LabName" -IssueNumber $issueNumber -LabFile $context.LabFile
@@ -73,7 +74,7 @@ $Helpers = {
                 if ($_.Name -match '^(?<n>\d{2})-') { [int]$Matches['n'] }
             }
 
-        $nextIndex = if ($existingIndexes) { ($existingIndexes | Measure-Object -Maximum).Maximum + 1 } else { 1 }
+        $nextIndex = if ($existingIndexes) { [int]($existingIndexes | Measure-Object -Maximum).Maximum + 1 } else { 1 }
         $indexStr  = '{0:D2}' -f $nextIndex
 
         # Use index in both folder and branch
@@ -152,10 +153,11 @@ Briefly describe the learning objective.
         if (-not (Test-Path $TemplatePath)) { Fail "Template not found: $TemplatePath" }
         New-Item -ItemType Directory -Force -Path $LabDir | Out-Null
         (Get-Content $TemplatePath) `
-            -replace '\*\*Date:\*\*.*', "**Date:** $Day" `
-            -replace '\*\*Linked Issue/PR:\*\*.*', "**Linked Issue/PR:** #$IssueNumber" `
-      | Set-Content $LabFile -NoNewline
+            -replace '\*\*Date:\*\*.*', "**Date:** $Day  " `
+            -replace '\*\*Linked Issue/PR:\*\*.*', "**Linked Issue/PR:** #$IssueNumber  " `
+      | Set-Content $LabFile
         Add-Content $LabFile "`r`n`r`n## Sessions`r`n"
+        Write-Host "Initialized lab file: $LabFile"
     }
 
     function Create-LabBranchAndCommit {
