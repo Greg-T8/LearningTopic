@@ -5,7 +5,6 @@ param(
     [string]$Repo,
 
     # Project targeting: EITHER supply ProjectUrl OR (ProjectOwner + ProjectNumber)
-    [string]$ProjectUrl,
     [string]$ProjectOwner,
     [int]$ProjectNumber = 2,
 
@@ -23,19 +22,19 @@ $Main = {
     $slug    = Slugify $LabName
     $context = New-LabContext -Repo $repo -Owner $owner -Slug $slug
 
-    $issue  = Ensure-LabIssue -Repo $repo -LabName $LabName -LabFile $context.LabFile -ExistingIssueNumber $ExistingIssueNumber
-    Add-IssueToProject -Repo $repo -IssueNumber $issue -Owner $owner -ProjectUrl $ProjectUrl -ProjectNumber $ProjectNumber
+    $issueNumber  = New-GitHubIssue -Repo $repo -LabName $LabName -LabFile $context.LabFile -ExistingIssueNumber $ExistingIssueNumber
+    Add-GitHubIssueToProject -Repo $repo -IssueNumber $issueNumber -Owner $owner -ProjectNumber $ProjectNumber
 
-    Initialize-LabFiles -TemplatePath $LabTemplatePath -LabDir $context.LabDir -LabFile $context.LabFile -Day $day -IssueNumber $issue
-    Create-LabBranchAndCommit -Branch $context.Branch -LabFile $context.LabFile -LabName $LabName -IssueNumber $issue
-    Open-LabPR -Repo $repo -PrTemplateFile $PrTemplateFile -PrTitle "[Lab] $LabName" -IssueNumber $issue -LabFile $context.LabFile
+    Initialize-LabFiles -TemplatePath $LabTemplatePath -LabDir $context.LabDir -LabFile $context.LabFile -Day $day -IssueNumber $issueNumber
+    Create-LabBranchAndCommit -Branch $context.Branch -LabFile $context.LabFile -LabName $LabName -IssueNumber $issueNumber
+    Open-LabPR -Repo $repo -PrTemplateFile $PrTemplateFile -PrTitle "[Lab] $LabName" -IssueNumber $issueNumber -LabFile $context.LabFile
 
-    Show-LabSummary -IssueNumber $issue -ProjectUrl $ProjectUrl -Branch $context.Branch -LabFile $context.LabFile
+    Show-LabSummary -IssueNumber $issueNumber -ProjectUrl $ProjectUrl -Branch $context.Branch -LabFile $context.LabFile
 }
 
 $Helpers = {
     function Fail($msg) { Write-Error $msg; exit 1 }
-    function Run($cmd) { Write-Host ">> $cmd" -ForegroundColor Cyan; Invoke-Expression $cmd }
+    function Run($cmd) { Write-Host "`n>> $cmd" -ForegroundColor Cyan; Invoke-Expression $cmd }
 
     function Get-Repo {
         param([string]$Repo)
@@ -92,27 +91,23 @@ $Helpers = {
         }
     }
 
-    function Add-IssueToProject {
+    function Add-GitHubIssueToProject {
         param(
             [Parameter(Mandatory)] [string]$Repo,
             [Parameter(Mandatory)] [int]$IssueNumber,
             [Parameter(Mandatory)] [string]$Owner,
-            [string]$ProjectUrl,
-            [int]$ProjectNumber
+            [Parameter(Mandatory)] [int]$ProjectNumber
         )
         $issueUrl = "https://github.com/$Repo/issues/$IssueNumber"
-        if ($ProjectUrl) {
-            Run "gh project item-add --url `"$ProjectUrl`" --owner `"$Owner`" --url `"$issueUrl`""
-        }
-        elseif ($Owner -and $ProjectNumber) {
-            Run "gh project item-add --owner `"$Owner`" --number $ProjectNumber --url `"$issueUrl`""
+        if ($Owner -and $ProjectNumber) {
+            Run "gh project item-add $ProjectNumber --owner $Owner --url $issueUrl"
         }
         else {
             Write-Host 'No project info provided. Skipping project add.'
         }
     }
 
-    function Ensure-LabIssue {
+    function New-GitHubIssue {
         param(
             [Parameter(Mandatory)] [string]$Repo,
             [Parameter(Mandatory)] [string]$LabName,
@@ -125,16 +120,19 @@ $Helpers = {
         }
 
         $body = @'
-**Objective**
+## Objective
 Briefly describe the learning objective.
 
-**Definition of Done**
+## Definition of Done
+
 - [ ] Lab notes committed in `$labFile`
 - [ ] Learning outcomes captured
 - [ ] PR merged
 
-**Links**
+## Links
+
 - (add resources)
+
 '@
 
         $createIssueCmd = "gh issue create -R $Repo --title `"$LabName`" --body @'`n$body`n'@ --label `"type: lab`" --label `"status: planned`""
