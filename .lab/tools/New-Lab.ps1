@@ -8,8 +8,8 @@ param(
     [string]$ProjectOwner,
     [int]$ProjectNumber = 2,
 
-    [string]$LabTemplatePath = 'kit/templates/lab_template.md',
-    [string]$PrTemplateFile  = 'kit/templates/pull_request_template_full.md'
+    [string]$LabTemplatePath = '.lab/templates/lab_template.md',
+    [string]$PrTemplateFile  = '.github/PULL_REQUEST_TEMPLATE/pull_request_template_full.md'
 )
 
 $Main = {
@@ -26,7 +26,15 @@ $Main = {
     # Add-GitHubIssueToProject -Repo $repo -IssueNumber $issueNumber -Owner $owner -ProjectNumber $ProjectNumber
 
     $day = Get-Date -Format 'yyyy-MM-dd'
-    Initialize-LabFiles -TemplatePath $LabTemplatePath -LabDir $context.LabDir -LabFile $context.LabFile -Day $day -IssueNumber $issueNumber
+    $initializeLabFilesSplat = @{
+        TemplatePath = $LabTemplatePath
+        LabTitle     = $LabName
+        LabDir       = $context.LabDir
+        LabFile      = $context.LabFile
+        Day          = $day
+        IssueNumber  = $issueNumber
+    }
+    Initialize-LabFiles @initializeLabFilesSplat
     Create-LabBranchAndCommit -Branch $context.Branch -LabFile $context.LabFile -LabName $LabName -IssueNumber $issueNumber
     Open-LabPR -Repo $repo -PrTemplateFile $PrTemplateFile -PrTitle "[Lab] $LabName" -IssueNumber $issueNumber -LabFile $context.LabFile
 
@@ -46,6 +54,18 @@ $Helpers = {
         Fail "Failed to parse owner/repo from origin URL '$url'"
     }
 
+    function Resolve-RepoRoot {
+        param([string]$Path)
+        if ($Path -eq '.' -or -not $Path) {
+            $root = git rev-parse --show-toplevel 2>$null
+            if ($LASTEXITCODE -eq 0 -and $root) { return $root }
+            # Fallback to current dir
+            return (Resolve-Path '.').Path
+        }
+        # Given path: ensure it's absolute
+        return (Resolve-Path $Path).Path
+    }
+
     function Slugify([string]$s) {
         $t = $s.Trim().ToLower()
         $t = $t -replace '[^a-z0-9\- ]', ''
@@ -63,13 +83,16 @@ $Helpers = {
             [Parameter(Mandatory)] [string]$Slug
         )
 
+        $repoRoot = Resolve-RepoRoot -Path '.'
+
         # Compute next 2-digit index under "labs"
         $labsRoot = 'labs'
-        if (-not (Test-Path -Path $LabsRoot -PathType Container)) {
-            New-Item -ItemType Directory -Force -Path $LabsRoot | Out-Null
+        $absLabsRoot = Join-Path -Path $repoRoot -ChildPath $labsRoot
+        if (-not (Test-Path -Path $absLabsRoot -PathType Container)) {
+            New-Item -ItemType Directory -Force -Path $absLabsRoot | Out-Null
         }
 
-        $existingIndexes = Get-ChildItem -Path $LabsRoot -Directory |
+        $existingIndexes = Get-ChildItem -Path $absLabsRoot -Directory |
             ForEach-Object {
                 if ($_.Name -match '^(?<n>\d{2})-') { [int]$Matches['n'] }
             }
@@ -81,7 +104,7 @@ $Helpers = {
         $branch = "lab/$indexStr-$Slug"
 
         $labDir  = Join-Path -Path $labsRoot -ChildPath "$indexStr-$Slug"
-        $labFile = Join-Path -Path $labDir  -ChildPath "$Slug.md"
+        $labFile = Join-Path -Path $labDir  -ChildPath "notes.md"
 
         [pscustomobject]@{
             Repo    = $Repo
@@ -147,16 +170,20 @@ Briefly describe the learning objective.
             [Parameter(Mandatory)] [string]$TemplatePath,
             [Parameter(Mandatory)] [string]$LabDir,
             [Parameter(Mandatory)] [string]$LabFile,
+            [Parameter(Mandatory)] [string]$LabTitle,
             [Parameter(Mandatory)] [string]$Day,
             [Parameter(Mandatory)] [int]$IssueNumber
         )
-        if (-not (Test-Path $TemplatePath)) { Fail "Template not found: $TemplatePath" }
-        New-Item -ItemType Directory -Force -Path $LabDir | Out-Null
-        (Get-Content $TemplatePath) `
+        $repoRoot = Resolve-RepoRoot -Path '.'
+        $absTemplatePath = "$repoRoot/$TemplatePath"
+        if (-not (Test-Path $absTemplatePath)) { Fail "Template not found: $TemplatePath" }
+        New-Item -ItemType Directory -Force -Path "$repoRoot/$LabDir" | Out-Null
+        (Get-Content $absTemplatePath) `
+            -replace '# Lab:.*', "# Lab: $LabTitle" `
             -replace '\*\*Date:\*\*.*', "**Date:** $Day  " `
             -replace '\*\*Linked Issue/PR:\*\*.*', "**Linked Issue/PR:** #$IssueNumber  " `
-      | Set-Content $LabFile
-        Add-Content $LabFile "`r`n`r`n## Sessions`r`n"
+      | Set-Content "$repoRoot/$LabFile"
+        Add-Content "$repoRoot/$LabFile" "`r`n`r`n## Sessions`r`n"
         Write-Host "Initialized lab file: $LabFile"
     }
 
