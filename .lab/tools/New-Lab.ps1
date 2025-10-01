@@ -6,10 +6,8 @@ param(
 
     # Project targeting: EITHER supply ProjectUrl OR (ProjectOwner + ProjectNumber)
     [string]$ProjectOwner,
-    [int]$ProjectNumber = 2,
+    [int]$ProjectNumber = 5,
 
-    [string]$LabTemplatePath = '.lab/templates/lab_template.md',
-    [string]$PrTemplateFile  = '.github/PULL_REQUEST_TEMPLATE/pull_request_template_full.md'
     [string]$LabTemplatePath = '.lab/templates/lab_template.md',
     [string]$PrTemplateFile  = '.github/PULL_REQUEST_TEMPLATE/pull_request_template_full.md'
 )
@@ -24,8 +22,8 @@ $Main = {
     $slug    = Slugify $LabName
     $context = New-LabContext -Repo $repo -Owner $owner -Slug $slug
 
-    # $issueNumber  = New-GitHubIssue -Repo $repo -LabName $LabName -LabFile $context.LabFile -ExistingIssueNumber $ExistingIssueNumber
-    # Add-GitHubIssueToProject -Repo $repo -IssueNumber $issueNumber -Owner $owner -ProjectNumber $ProjectNumber
+    $issueNumber  = New-GitHubIssue -Repo $repo -LabName $LabName -LabFile $context.LabFile -ExistingIssueNumber $ExistingIssueNumber
+    Add-GitHubIssueToProject -Repo $repo -IssueNumber $issueNumber -Owner $owner -ProjectNumber $ProjectNumber
 
     $day = Get-Date -Format 'yyyy-MM-dd'
     $initializeLabFilesSplat = @{
@@ -34,7 +32,7 @@ $Main = {
         LabDir       = $context.LabDir
         LabFile      = $context.LabFile
         Day          = $day
-        IssueNumber  = $issueNumber
+        IssueURL     = $issueURL
     }
     Initialize-LabFiles @initializeLabFilesSplat
     $initializeLabFilesSplat = @{
@@ -45,7 +43,7 @@ $Main = {
         Day          = $day
         IssueNumber  = $issueNumber
     }
-    Initialize-LabFiles @initializeLabFilesSplat
+    exit 0 # TEMP
     Create-LabBranchAndCommit -Branch $context.Branch -LabFile $context.LabFile -LabName $LabName -IssueNumber $issueNumber
     Open-LabPR -Repo $repo -PrTemplateFile $PrTemplateFile -PrTitle "[Lab] $LabName" -IssueNumber $issueNumber -LabFile $context.LabFile
 
@@ -63,18 +61,6 @@ $Helpers = {
         if (-not $url) { Fail 'Cannot infer repo. Provide -Repo owner/repo.' }
         if ($url -match '[:/]([^/]+/[^/\.]+)(\.git)?$') { return $Matches[1] }
         Fail "Failed to parse owner/repo from origin URL '$url'"
-    }
-
-    function Resolve-RepoRoot {
-        param([string]$Path)
-        if ($Path -eq '.' -or -not $Path) {
-            $root = git rev-parse --show-toplevel 2>$null
-            if ($LASTEXITCODE -eq 0 -and $root) { return $root }
-            # Fallback to current dir
-            return (Resolve-Path '.').Path
-        }
-        # Given path: ensure it's absolute
-        return (Resolve-Path $Path).Path
     }
 
     function Resolve-RepoRoot {
@@ -115,12 +101,9 @@ $Helpers = {
         $absLabsRoot = Join-Path -Path $repoRoot -ChildPath $labsRoot
         if (-not (Test-Path -Path $absLabsRoot -PathType Container)) {
             New-Item -ItemType Directory -Force -Path $absLabsRoot | Out-Null
-        $absLabsRoot = Join-Path -Path $repoRoot -ChildPath $labsRoot
-        if (-not (Test-Path -Path $absLabsRoot -PathType Container)) {
-            New-Item -ItemType Directory -Force -Path $absLabsRoot | Out-Null
         }
+        $absLabsRoot = Join-Path -Path $repoRoot -ChildPath $labsRoot
 
-        $existingIndexes = Get-ChildItem -Path $absLabsRoot -Directory |
         $existingIndexes = Get-ChildItem -Path $absLabsRoot -Directory |
             ForEach-Object {
                 if ($_.Name -match '^(?<n>\d{2})-') { [int]$Matches['n'] }
@@ -199,7 +182,6 @@ Briefly describe the learning objective.
             [Parameter(Mandatory)] [string]$TemplatePath,
             [Parameter(Mandatory)] [string]$LabDir,
             [Parameter(Mandatory)] [string]$LabFile,
-            [Parameter(Mandatory)] [string]$LabTitle,
             [Parameter(Mandatory)] [string]$LabTitle,
             [Parameter(Mandatory)] [string]$Day,
             [Parameter(Mandatory)] [int]$IssueNumber
