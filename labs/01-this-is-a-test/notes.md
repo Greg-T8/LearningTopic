@@ -1,9 +1,9 @@
-# Lab: Title
+# Lab: This is a test
 
-**Date:** YYYY-MM-DD  
-**Level:** L1 | L2 | L3 | L4  
-**Exam Objective/Domain:** Paste from exam outline  
-**Linked Issue/PR:** #id
+**Start Date:** 2025-10-01  
+**Completion Date:** YYYY-MM-DD
+**Status:** L1 | L2 | L3 | L4  
+**Linked GitHub Item:** #0  
 
 ## Objective
 
@@ -56,3 +56,7 @@ One to two sentences about what this lab achieves. Map directly to exam outline.
 - Microsoft Learn Module
 - Exam Guide Reference
 - Additional Source
+
+
+## Sessions
+
