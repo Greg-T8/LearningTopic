@@ -10,6 +10,8 @@ param(
 
     [string]$LabTemplatePath = '.lab/templates/lab_template.md',
     [string]$PrTemplateFile  = '.github/PULL_REQUEST_TEMPLATE/pull_request_template_full.md'
+    [string]$LabTemplatePath = '.lab/templates/lab_template.md',
+    [string]$PrTemplateFile  = '.github/PULL_REQUEST_TEMPLATE/pull_request_template_full.md'
 )
 
 $Main = {
@@ -26,6 +28,15 @@ $Main = {
     # Add-GitHubIssueToProject -Repo $repo -IssueNumber $issueNumber -Owner $owner -ProjectNumber $ProjectNumber
 
     $day = Get-Date -Format 'yyyy-MM-dd'
+    $initializeLabFilesSplat = @{
+        TemplatePath = $LabTemplatePath
+        LabTitle     = $LabName
+        LabDir       = $context.LabDir
+        LabFile      = $context.LabFile
+        Day          = $day
+        IssueNumber  = $issueNumber
+    }
+    Initialize-LabFiles @initializeLabFilesSplat
     $initializeLabFilesSplat = @{
         TemplatePath = $LabTemplatePath
         LabTitle     = $LabName
@@ -66,6 +77,18 @@ $Helpers = {
         return (Resolve-Path $Path).Path
     }
 
+    function Resolve-RepoRoot {
+        param([string]$Path)
+        if ($Path -eq '.' -or -not $Path) {
+            $root = git rev-parse --show-toplevel 2>$null
+            if ($LASTEXITCODE -eq 0 -and $root) { return $root }
+            # Fallback to current dir
+            return (Resolve-Path '.').Path
+        }
+        # Given path: ensure it's absolute
+        return (Resolve-Path $Path).Path
+    }
+
     function Slugify([string]$s) {
         $t = $s.Trim().ToLower()
         $t = $t -replace '[^a-z0-9\- ]', ''
@@ -85,13 +108,19 @@ $Helpers = {
 
         $repoRoot = Resolve-RepoRoot -Path '.'
 
+        $repoRoot = Resolve-RepoRoot -Path '.'
+
         # Compute next 2-digit index under "labs"
         $labsRoot = 'labs'
         $absLabsRoot = Join-Path -Path $repoRoot -ChildPath $labsRoot
         if (-not (Test-Path -Path $absLabsRoot -PathType Container)) {
             New-Item -ItemType Directory -Force -Path $absLabsRoot | Out-Null
+        $absLabsRoot = Join-Path -Path $repoRoot -ChildPath $labsRoot
+        if (-not (Test-Path -Path $absLabsRoot -PathType Container)) {
+            New-Item -ItemType Directory -Force -Path $absLabsRoot | Out-Null
         }
 
+        $existingIndexes = Get-ChildItem -Path $absLabsRoot -Directory |
         $existingIndexes = Get-ChildItem -Path $absLabsRoot -Directory |
             ForEach-Object {
                 if ($_.Name -match '^(?<n>\d{2})-') { [int]$Matches['n'] }
@@ -170,6 +199,7 @@ Briefly describe the learning objective.
             [Parameter(Mandatory)] [string]$TemplatePath,
             [Parameter(Mandatory)] [string]$LabDir,
             [Parameter(Mandatory)] [string]$LabFile,
+            [Parameter(Mandatory)] [string]$LabTitle,
             [Parameter(Mandatory)] [string]$LabTitle,
             [Parameter(Mandatory)] [string]$Day,
             [Parameter(Mandatory)] [int]$IssueNumber
