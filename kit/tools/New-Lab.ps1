@@ -1,47 +1,41 @@
 [CmdletBinding()]
 param(
-    [string]$LabName,
+    [string]$LabName = 'This is a test',
     [int]$ExistingIssueNumber,
     [string]$Repo,
 
     # Project targeting: EITHER supply ProjectUrl OR (ProjectOwner + ProjectNumber)
-    [string]$ProjectUrl,
     [string]$ProjectOwner,
-    [int]$ProjectNumber,
+    [int]$ProjectNumber = 2,
 
-    [string]$LabTemplatePath = 'templates/labs/lab_template.md',
-    [string]$PrTemplateFile  = 'pull_request_template_full.md'
+    [string]$LabTemplatePath = 'kit/templates/lab_template.md',
+    [string]$PrTemplateFile  = 'kit/templates/pull_request_template_full.md'
 )
 
 $Main = {
     . $Helpers
-    . $Config
 
     if (-not $LabName) { $LabName = Read-Host 'Lab name' }
 
-    $repo   = Get-Repo -Repo $Repo
-    $owner  = $repo.Split('/')[0]
-    $slug   = Slugify $LabName
-    $day    = Today
-    $ctx    = New-LabContext -Repo $repo -Owner $owner -Day $day -Slug $slug
+    $repo    = Get-Repo -Repo $Repo
+    $owner   = $repo.Split('/')[0]
+    $slug    = Slugify $LabName
+    $context = New-LabContext -Repo $repo -Owner $owner -Slug $slug
 
-    $issue  = Ensure-LabIssue -Repo $repo -LabName $LabName -LabFile $ctx.LabFile -ExistingIssueNumber $ExistingIssueNumber
-    Add-IssueToProject -Repo $repo -IssueNumber $issue -Owner $owner -ProjectUrl $ProjectUrl -ProjectOwner $ProjectOwner -ProjectNumber $ProjectNumber
+    # $issueNumber  = New-GitHubIssue -Repo $repo -LabName $LabName -LabFile $context.LabFile -ExistingIssueNumber $ExistingIssueNumber
+    # Add-GitHubIssueToProject -Repo $repo -IssueNumber $issueNumber -Owner $owner -ProjectNumber $ProjectNumber
 
-    Initialize-LabFiles -TemplatePath $LabTemplatePath -LabDir $ctx.LabDir -LabFile $ctx.LabFile -Day $day -IssueNumber $issue
-    Create-LabBranchAndCommit -Branch $ctx.Branch -LabFile $ctx.LabFile -LabName $LabName -IssueNumber $issue
-    Open-LabPR -Repo $repo -PrTemplateFile $PrTemplateFile -PrTitle "[Lab] $LabName" -IssueNumber $issue -LabFile $ctx.LabFile
+    $day = Get-Date -Format 'yyyy-MM-dd'
+    Initialize-LabFiles -TemplatePath $LabTemplatePath -LabDir $context.LabDir -LabFile $context.LabFile -Day $day -IssueNumber $issueNumber
+    Create-LabBranchAndCommit -Branch $context.Branch -LabFile $context.LabFile -LabName $LabName -IssueNumber $issueNumber
+    Open-LabPR -Repo $repo -PrTemplateFile $PrTemplateFile -PrTitle "[Lab] $LabName" -IssueNumber $issueNumber -LabFile $context.LabFile
 
-    Show-LabSummary -IssueNumber $issue -ProjectUrl $ProjectUrl -Branch $ctx.Branch -LabFile $ctx.LabFile
-}
-
-$Config = {
-    Set-Variable -Name DateFormat -Value 'yyyy-MM-dd' -Scope Script -Option ReadOnly
+    Show-LabSummary -IssueNumber $issueNumber -ProjectUrl $ProjectUrl -Branch $context.Branch -LabFile $context.LabFile
 }
 
 $Helpers = {
     function Fail($msg) { Write-Error $msg; exit 1 }
-    function Run($cmd) { Write-Host ">> $cmd" -ForegroundColor Cyan; Invoke-Expression $cmd }
+    function Run($cmd) { Write-Host "`n>> $cmd" -ForegroundColor Cyan; Invoke-Expression $cmd }
 
     function Get-Repo {
         param([string]$Repo)
@@ -66,12 +60,29 @@ $Helpers = {
         param(
             [Parameter(Mandatory)] [string]$Repo,
             [Parameter(Mandatory)] [string]$Owner,
-            [Parameter(Mandatory)] [string]$Day,
             [Parameter(Mandatory)] [string]$Slug
         )
-        $branch  = "lab/$Day-$Slug"
-        $labDir  = "labs/$Day-$Slug"
-        $labFile = "$labDir/$Day-$Slug.md"
+
+        # Compute next 2-digit index under "labs"
+        $labsRoot = 'labs'
+        if (-not (Test-Path -Path $LabsRoot -PathType Container)) {
+            New-Item -ItemType Directory -Force -Path $LabsRoot | Out-Null
+        }
+
+        $existingIndexes = Get-ChildItem -Path $LabsRoot -Directory |
+            ForEach-Object {
+                if ($_.Name -match '^(?<n>\d{2})-') { [int]$Matches['n'] }
+            }
+
+        $nextIndex = if ($existingIndexes) { [int]($existingIndexes | Measure-Object -Maximum).Maximum + 1 } else { 1 }
+        $indexStr  = '{0:D2}' -f $nextIndex
+
+        # Use index in both folder and branch
+        $branch = "lab/$indexStr-$Slug"
+
+        $labDir  = Join-Path -Path $labsRoot -ChildPath "$indexStr-$Slug"
+        $labFile = Join-Path -Path $labDir  -ChildPath "$Slug.md"
+
         [pscustomobject]@{
             Repo    = $Repo
             Owner   = $Owner
@@ -81,28 +92,23 @@ $Helpers = {
         }
     }
 
-    function Add-IssueToProject {
+    function Add-GitHubIssueToProject {
         param(
             [Parameter(Mandatory)] [string]$Repo,
             [Parameter(Mandatory)] [int]$IssueNumber,
             [Parameter(Mandatory)] [string]$Owner,
-            [string]$ProjectUrl,
-            [string]$ProjectOwner,
-            [int]$ProjectNumber
+            [Parameter(Mandatory)] [int]$ProjectNumber
         )
         $issueUrl = "https://github.com/$Repo/issues/$IssueNumber"
-        if ($ProjectUrl) {
-            Run "gh project item-add --url `"$ProjectUrl`" --owner `"$Owner`" --url `"$issueUrl`""
-        }
-        elseif ($ProjectOwner -and $ProjectNumber) {
-            Run "gh project item-add --owner `"$ProjectOwner`" --number $ProjectNumber --url `"$issueUrl`""
+        if ($Owner -and $ProjectNumber) {
+            Run "gh project item-add $ProjectNumber --owner $Owner --url $issueUrl"
         }
         else {
             Write-Host 'No project info provided. Skipping project add.'
         }
     }
 
-    function Ensure-LabIssue {
+    function New-GitHubIssue {
         param(
             [Parameter(Mandatory)] [string]$Repo,
             [Parameter(Mandatory)] [string]$LabName,
@@ -115,19 +121,22 @@ $Helpers = {
         }
 
         $body = @'
-**Objective**
+## Objective
 Briefly describe the learning objective.
 
-**Definition of Done**
+## Definition of Done
+
 - [ ] Lab notes committed in `$labFile`
 - [ ] Learning outcomes captured
 - [ ] PR merged
 
-**Links**
+## Links
+
 - (add resources)
+
 '@
 
-        $createIssueCmd = "gh issue create -R $Repo --title `"[Lab] $LabName`" --body @'$body'@ --label `"type: lab`" --label `"status: planned`""
+        $createIssueCmd = "gh issue create -R $Repo --title `"$LabName`" --body @'`n$body`n'@ --label `"type: lab`" --label `"status: planned`""
         $issueUrlOut = (Run $createIssueCmd | Select-Object -Last 1)
         if ($issueUrlOut -notmatch '/issues/(\d+)$') { Fail "Could not parse created issue number from: $issueUrlOut" }
         return [int]$Matches[1]
@@ -144,10 +153,11 @@ Briefly describe the learning objective.
         if (-not (Test-Path $TemplatePath)) { Fail "Template not found: $TemplatePath" }
         New-Item -ItemType Directory -Force -Path $LabDir | Out-Null
         (Get-Content $TemplatePath) `
-            -replace '\*\*Date:\*\*.*', "**Date:** $Day" `
-            -replace '\*\*Linked Issue/PR:\*\*.*', "**Linked Issue/PR:** #$IssueNumber" `
-      | Set-Content $LabFile -NoNewline
+            -replace '\*\*Date:\*\*.*', "**Date:** $Day  " `
+            -replace '\*\*Linked Issue/PR:\*\*.*', "**Linked Issue/PR:** #$IssueNumber  " `
+      | Set-Content $LabFile
         Add-Content $LabFile "`r`n`r`n## Sessions`r`n"
+        Write-Host "Initialized lab file: $LabFile"
     }
 
     function Create-LabBranchAndCommit {
