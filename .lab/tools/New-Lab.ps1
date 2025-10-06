@@ -183,12 +183,18 @@ Briefly describe the learning objective.
         $absTemplatePath = "$repoRoot/$TemplatePath"
         if (-not (Test-Path $absTemplatePath)) { Fail "Template not found: $TemplatePath" }
         New-Item -ItemType Directory -Force -Path "$repoRoot/$LabDir" | Out-Null
-        (Get-Content $absTemplatePath) `
-            -replace '# Lab:.*', "# Lab: $LabTitle" `
-            -replace '\*\*Start Date:\*\*.*', "**Start Date:** $Day  " `
-            -replace '\*\*Completion Date:\*\*.*', "**Completion Date:**  " `
-            -replace '\*\*Linked GitHub Item:\*\*.*', "**Linked GitHub Item:** [$($Issue.IssueTitle)]($($Issue.IssueURL))  " `
-      | Set-Content "$repoRoot/$LabFile"
+
+        $replacements = @{
+            '# Lab:.*'                       = "# Lab: $LabTitle"
+            '\*\*Start Date:\*\*.*'          = "**Start Date:** $Day  "
+            '\*\*Completion Date:\*\*.*'     = '**Completion Date:**  '
+            '\*\*Linked GitHub Item:\*\*.*'  = "**Linked GitHub Item:** [$($Issue.IssueTitle)]($($Issue.IssueURL))  "
+        }
+        $content = Get-Content $absTemplatePath -Raw
+        foreach ($pattern in $replacements.Keys) {
+            $content = $content -replace $pattern, $replacements[$pattern]
+        }
+        $content | Set-Content $absTemplatePath
         Add-Content "$repoRoot/$LabFile" "`r`n`r`n## Sessions`r`n"
         Write-Host "Initialized lab file: $LabFile"
     }
