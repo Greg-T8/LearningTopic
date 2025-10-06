@@ -1,8 +1,8 @@
-# Lab: This is a test
+# Lab: Title
 
 **Start Date:** YYYY-MM-DD  
 **Completion Date:** YYYY-MM-DD
-**Completion Level:** L1 | L2 | L3 | L4  
+**Status:** L1 | L2 | L3 | L4  
 **Linked GitHub Item:** [Item](URL)
 
 ## Objective
@@ -56,5 +56,3 @@ One to two sentences about what this lab achieves. Map directly to exam outline.
 - Microsoft Learn Module
 - Exam Guide Reference
 - Additional Source
-
-
