@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param(
     [string]$LabName = 'This is a test',
-    [int]$ExistingIssueNumber,
     [string]$Repo,
 
     # Project targeting: EITHER supply ProjectUrl OR (ProjectOwner + ProjectNumber)
@@ -22,8 +21,8 @@ $Main = {
     $slug    = Slugify $LabName
     $context = New-LabContext -Repo $repo -Owner $owner -Slug $slug
 
-    $issueNumber  = New-GitHubIssue -Repo $repo -LabName $LabName -LabFile $context.LabFile -ExistingIssueNumber $ExistingIssueNumber
-    Add-GitHubIssueToProject -Repo $repo -IssueNumber $issueNumber -Owner $owner -ProjectNumber $ProjectNumber
+    $issue = New-GitHubIssue -Repo $repo -LabName $LabName -LabFile $context.LabFile
+    Add-GitHubIssueToProject -Repo $repo -IssueNumber $issue.IssueNumber -Owner $owner -ProjectNumber $ProjectNumber
 
     $day = Get-Date -Format 'yyyy-MM-dd'
     $initializeLabFilesSplat = @{
@@ -32,20 +31,12 @@ $Main = {
         LabDir       = $context.LabDir
         LabFile      = $context.LabFile
         Day          = $day
-        IssueURL     = $issueURL
+        Issue        = $issue
     }
     Initialize-LabFiles @initializeLabFilesSplat
-    $initializeLabFilesSplat = @{
-        TemplatePath = $LabTemplatePath
-        LabTitle     = $LabName
-        LabDir       = $context.LabDir
-        LabFile      = $context.LabFile
-        Day          = $day
-        IssueNumber  = $issueNumber
-    }
     exit 0 # TEMP
-    Create-LabBranchAndCommit -Branch $context.Branch -LabFile $context.LabFile -LabName $LabName -IssueNumber $issueNumber
-    Open-LabPR -Repo $repo -PrTemplateFile $PrTemplateFile -PrTitle "[Lab] $LabName" -IssueNumber $issueNumber -LabFile $context.LabFile
+    Create-LabBranchAndCommit -Branch $context.Branch -LabFile $context.LabFile -LabName $LabName -IssueNumber $issue.IssueNumber
+    Open-LabPR -Repo $repo -PrTemplateFile $PrTemplateFile -PrTitle "[Lab] $LabName" -IssueNumber $issue.IssueNumber -LabFile $context.LabFile
 
     Show-LabSummary -IssueNumber $issueNumber -ProjectUrl $ProjectUrl -Branch $context.Branch -LabFile $context.LabFile
 }
@@ -144,16 +135,12 @@ $Helpers = {
     }
 
     function New-GitHubIssue {
+        [OutputType([PSCustomObject])]
         param(
             [Parameter(Mandatory)] [string]$Repo,
             [Parameter(Mandatory)] [string]$LabName,
-            [Parameter(Mandatory)] [string]$LabFile,
-            [int]$ExistingIssueNumber
+            [Parameter(Mandatory)] [string]$LabFile
         )
-        if ($ExistingIssueNumber) {
-            Write-Host "Using existing issue #$ExistingIssueNumber"
-            return $ExistingIssueNumber
-        }
 
         $body = @'
 ## Objective
@@ -174,7 +161,13 @@ Briefly describe the learning objective.
         $createIssueCmd = "gh issue create -R $Repo --title `"$LabName`" --body @'`n$body`n'@ --label `"type: lab`" --label `"status: planned`""
         $issueUrlOut = (Run $createIssueCmd | Select-Object -Last 1)
         if ($issueUrlOut -notmatch '/issues/(\d+)$') { Fail "Could not parse created issue number from: $issueUrlOut" }
-        return [int]$Matches[1]
+
+        $output = [pscustomobject]@{
+            IssueURL    = $issueUrlOut
+            IssueNumber = [int]$Matches[1]
+            IssueTitle  = $LabName
+        }
+        return $output
     }
 
     function Initialize-LabFiles {
@@ -184,18 +177,24 @@ Briefly describe the learning objective.
             [Parameter(Mandatory)] [string]$LabFile,
             [Parameter(Mandatory)] [string]$LabTitle,
             [Parameter(Mandatory)] [string]$Day,
-            [Parameter(Mandatory)] [int]$IssueNumber
+            [Parameter(Mandatory)] [PSCustomObject]$Issue
         )
         $repoRoot = Resolve-RepoRoot -Path '.'
         $absTemplatePath = "$repoRoot/$TemplatePath"
         if (-not (Test-Path $absTemplatePath)) { Fail "Template not found: $TemplatePath" }
         New-Item -ItemType Directory -Force -Path "$repoRoot/$LabDir" | Out-Null
-        (Get-Content $absTemplatePath) `
-            -replace '# Lab:.*', "# Lab: $LabTitle" `
-            -replace '\*\*Start Date:\*\*.*', "**Start Date:** $Day  " `
-            -replace '\*\*Completion Date:\*\*.*', "**Completion Date:**  " `
-            -replace '\*\*Linked GitHub Item:\*\*.*', "**Linked GitHub Item:** #$IssueNumber  " `
-      | Set-Content "$repoRoot/$LabFile"
+
+        $replacements = @{
+            '# Lab:.*'                       = "# Lab: $LabTitle"
+            '\*\*Start Date:\*\*.*'          = "**Start Date:** $Day  "
+            '\*\*Completion Date:\*\*.*'     = '**Completion Date:**  '
+            '\*\*Linked GitHub Item:\*\*.*'  = "**Linked GitHub Item:** [$($Issue.IssueTitle)]($($Issue.IssueURL))  "
+        }
+        $content = Get-Content $absTemplatePath -Raw
+        foreach ($pattern in $replacements.Keys) {
+            $content = $content -replace $pattern, $replacements[$pattern]
+        }
+        $content | Set-Content $absTemplatePath
         Add-Content "$repoRoot/$LabFile" "`r`n`r`n## Sessions`r`n"
         Write-Host "Initialized lab file: $LabFile"
     }
