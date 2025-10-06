@@ -1,9 +1,9 @@
 # Lab: This is a test
 
-**Start Date:** 2025-10-01  
+**Start Date:** 2025-10-06  
 **Completion Date:**  
 **Status:** L1 | L2 | L3 | L4  
-**Linked GitHub Item:** #96  
+**Linked GitHub Item:** []()  
 
 ## Objective
 

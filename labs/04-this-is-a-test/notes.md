@@ -3,7 +3,7 @@
 **Start Date:** 2025-10-06  
 **Completion Date:**  
 **Status:** L1 | L2 | L3 | L4  
-**Linked GitHub Item:** [\](\)  
+**Linked GitHub Item:** [This is a test](https://github.com/Greg-T8/LearningTopic/issues/107)  
 
 ## Objective
 
