@@ -1,9 +1,9 @@
 # Lab: Title
 
-**Date:** YYYY-MM-DD  
-**Level:** L1 | L2 | L3 | L4  
-**Exam Objective/Domain:** Paste from exam outline  
-**Linked Issue/PR:** #id
+**Start Date:** YYYY-MM-DD  
+**Completion Date:** YYYY-MM-DD
+**Completion Level:** L1 | L2 | L3 | L4  
+**Linked GitHub Item:** [Item](URL)
 
 ## Objective
 
