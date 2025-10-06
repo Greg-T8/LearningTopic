@@ -25,7 +25,7 @@ $Main = {
     Add-GitHubIssueToProject -Repo $repo -IssueNumber $issue.IssueNumber -Owner $owner -ProjectNumber $ProjectNumber
 
     $day = Get-Date -Format 'yyyy-MM-dd'
-    $initializeLabFilesSplat = @{
+    $initializeLabFileSplat = @{
         TemplatePath = $LabTemplatePath
         LabTitle     = $LabName
         LabDir       = $context.LabDir
@@ -33,10 +33,10 @@ $Main = {
         Day          = $day
         Issue        = $issue
     }
-    Initialize-LabFiles @initializeLabFilesSplat
-    exit 0 # TEMP
-    Create-LabBranchAndCommit -Branch $context.Branch -LabFile $context.LabFile -LabName $LabName -IssueNumber $issue.IssueNumber
+    Initialize-LabFile @initializeLabFileSplat
+    # Create-LabBranchAndCommit -Branch $context.Branch -LabFile $context.LabFile -LabName $LabName -IssueNumber $issue.IssueNumber
     Open-LabPR -Repo $repo -PrTemplateFile $PrTemplateFile -PrTitle "[Lab] $LabName" -IssueNumber $issue.IssueNumber -LabFile $context.LabFile
+    exit 0 # TEMP
 
     Show-LabSummary -IssueNumber $issueNumber -ProjectUrl $ProjectUrl -Branch $context.Branch -LabFile $context.LabFile
 }
@@ -170,7 +170,7 @@ Briefly describe the learning objective.
         return $output
     }
 
-    function Initialize-LabFiles {
+    function Initialize-LabFile {
         param(
             [Parameter(Mandatory)] [string]$TemplatePath,
             [Parameter(Mandatory)] [string]$LabDir,
@@ -194,7 +194,7 @@ Briefly describe the learning objective.
         foreach ($pattern in $replacements.Keys) {
             $content = $content -replace $pattern, $replacements[$pattern]
         }
-        $content | Set-Content $absTemplatePath
+        $content | Set-Content $LabFile
         Add-Content "$repoRoot/$LabFile" "`r`n`r`n## Sessions`r`n"
         Write-Host "Initialized lab file: $LabFile"
     }
@@ -220,12 +220,8 @@ Briefly describe the learning objective.
             [Parameter(Mandatory)] [int]$IssueNumber,
             [Parameter(Mandatory)] [string]$LabFile
         )
-        $prBody = @"
-Closes #$IssueNumber
 
-This PR scaffolds the lab and initial notes under \`$LabFile\`.
-"@
-        Run "gh pr create -R $Repo --title `"$PrTitle`" --body @'$prBody'@ --draft --fill --template `"$PrTemplateFile`""
+        Run "gh pr create -R $Repo --title `"$PrTitle`" --draft --fill --template `"$PrTemplateFile`""
     }
 
     function Show-LabSummary {
