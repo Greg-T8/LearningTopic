@@ -1,4 +1,3 @@
-# MD033: no-inline-html
-# This rule flags raw HTML inside Markdown. I disable it because I use HTML tags in markdown files.
-MD033: false
-MD013: false
+MD024: false # Multiple headers with the same content
+MD033: false # Allow inline HTML
+MD045: false # Omit alternate text form image links
